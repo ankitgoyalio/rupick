@@ -15,17 +15,38 @@ struct AssetCandidate: Identifiable, Sendable, Equatable {
     let representations: [Representation]
 }
 
+enum ComparisonStatus: Sendable {
+    case waiting, decoding, comparing, complete, incomplete, unreadable
+}
+
+enum SearchState: Sendable {
+    case idle, running, complete, cancelled, failed
+}
+
 struct IncomingResult: Identifiable, Sendable, Equatable {
     var id: URL { url }
     let url: URL
     var candidates: [AssetCandidate] = []
     var error: String?
+    var status: ComparisonStatus = .waiting
+
+    var statusText: String {
+        switch status {
+        case .waiting: return "Waiting for catalog scan…"
+        case .decoding: return "Reading image…"
+        case .comparing: return "Comparing · \(candidates.count) provisional matches"
+        case .unreadable: return "Image unavailable"
+        case .incomplete: return "Incomplete search · \(candidates.count) matches so far"
+        case .complete: return candidates.isEmpty ? "No matches found" : "\(candidates.count) exact matches"
+        }
+    }
 }
 
 struct ScanSnapshot: Sendable {
     var results: [IncomingResult]
     var discovered = 0
     var compared = 0
+    var decoded = 0
     var skipped = 0
     var phase = "Discovering image assets…"
     var error: String?
@@ -35,9 +56,12 @@ struct ScanSnapshot: Sendable {
 final class ProjectSession {
     private(set) var root: URL?
     private(set) var results: [IncomingResult] = []
-    private(set) var isRunning = false
+    private(set) var state: SearchState = .idle
+    var isRunning: Bool { state == .running }
+    var isIncomplete: Bool { skipped > 0 || state == .cancelled || state == .failed }
     private(set) var discovered = 0
     private(set) var compared = 0
+    private(set) var decoded = 0
     private(set) var skipped = 0
     private(set) var phase = "Choose a project folder to begin."
     private(set) var error: String?
@@ -47,13 +71,15 @@ final class ProjectSession {
     @discardableResult
     func start(root: URL, incoming: [URL]) -> Task<Void, Never> {
         worker?.cancel()
+        var seen = Set<URL>()
+        let incoming = incoming.filter { seen.insert($0).inserted }
         let token = UUID()
         generation = token
         self.root = root
         results = incoming.map { IncomingResult(url: $0) }
-        discovered = 0; compared = 0; skipped = 0; error = nil
+        discovered = 0; compared = 0; decoded = 0; skipped = 0; error = nil
         phase = "Discovering image assets…"
-        isRunning = true
+        state = .running
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             guard let session = self else { return }
             let rootAccess = root.startAccessingSecurityScopedResource()
@@ -72,9 +98,12 @@ final class ProjectSession {
     }
 
     func cancel() {
+        guard isRunning else { return }
         worker?.cancel()
+        worker = nil
         generation = UUID()
-        isRunning = false
+        state = .cancelled
+        markResultsIncomplete()
         phase = "Search cancelled. Results are incomplete."
     }
 
@@ -83,6 +112,7 @@ final class ProjectSession {
         results = snapshot.results
         discovered = snapshot.discovered
         compared = snapshot.compared
+        decoded = snapshot.decoded
         skipped = snapshot.skipped
         phase = snapshot.phase
         error = snapshot.error
@@ -90,7 +120,16 @@ final class ProjectSession {
 
     private func finish(token: UUID) {
         guard token == generation else { return }
-        isRunning = false
+        state = error == nil ? .complete : .failed
+        if isIncomplete { markResultsIncomplete() }
+        else {
+            for index in results.indices where results[index].error == nil { results[index].status = .complete }
+        }
         phase = error == nil ? "Search complete" : "Search failed"
+        worker = nil
+    }
+
+    private func markResultsIncomplete() {
+        for index in results.indices where results[index].error == nil { results[index].status = .incomplete }
     }
 }

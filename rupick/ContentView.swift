@@ -7,6 +7,8 @@ struct ContentView: View {
     @State private var selectedIncoming: URL?
     @State private var projectAccess: URL?
     @State private var incomingAccess: [URL] = []
+    @State private var dropNotice: String?
+    @State private var dropTargeted = false
 
     var body: some View {
         NavigationSplitView {
@@ -16,24 +18,27 @@ struct ContentView: View {
                 List(session.results, selection: $selectedIncoming) { result in
                     VStack(alignment: .leading) {
                         Text(result.url.lastPathComponent)
-                        Text(result.error == nil ? "\(result.candidates.count) exact matches" : "Image unavailable")
+                        Text(result.statusText)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .tag(result.url)
+                    .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
             if let result = session.results.first(where: { $0.url == selectedIncoming }) {
-                ComparisonDetail(result: result, root: session.root, provisional: session.isRunning,
-                                 incomplete: session.skipped > 0 || session.error != nil || session.phase.hasPrefix("Search cancelled"))
+                ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
             } else {
                 ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
-                    description: Text("Choose your project folder, then a PNG or JPEG to compare with its image assets."))
+                    description: Text("Choose your project folder, then choose or drop PNG or JPEG images to compare with its image assets."))
             }
         }
         .safeAreaInset(edge: .bottom) {
-            SessionProgress(session: session).padding().background(.bar)
+            VStack(alignment: .leading) {
+                if let dropNotice { Text(dropNotice).foregroundStyle(.orange) }
+                SessionProgress(session: session)
+            }.padding().background(.bar)
         }
         .toolbar {
             Button("Open Project…", systemImage: "folder") { pickProject() }
@@ -50,6 +55,12 @@ struct ContentView: View {
                     .help("Stop the search and keep the matches found so far.")
             }
         }
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 12).stroke(.tint, lineWidth: 3).padding(6).allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted, perform: acceptDrop)
         .frame(minWidth: 950, minHeight: 620)
         .onDisappear {
             session.cancel()
@@ -69,6 +80,7 @@ struct ContentView: View {
             releaseAccess()
             if url.startAccessingSecurityScopedResource() { projectAccess = url }
             selectedIncoming = nil
+            dropNotice = nil
             session.start(root: url, incoming: [])
         }
     }
@@ -79,13 +91,43 @@ struct ContentView: View {
         panel.allowedContentTypes = [.png, .jpeg]
         panel.allowsMultipleSelection = true
         panel.begin { response in
-            guard response == .OK, let root = session.root else { return }
-            let existing = session.results.map(\.url)
-            let added = panel.urls.filter { !existing.contains($0) }
-            for url in added where url.startAccessingSecurityScopedResource() { incomingAccess.append(url) }
-            session.start(root: root, incoming: existing + added)
-            selectedIncoming = added.first ?? existing.first
+            guard response == .OK else { return }
+            addImages(panel.urls)
         }
+    }
+
+    private func addImages(_ urls: [URL]) {
+        guard let root = session.root else { return }
+        let images = urls.filter { $0.isFileURL && ["png", "jpg", "jpeg"].contains($0.pathExtension.lowercased()) }
+        if images.count != urls.count { dropNotice = "Some files were not added. Choose PNG or JPEG files." }
+        let existing = session.results.map(\.url)
+        var seen = Set(existing)
+        let added = images.filter { seen.insert($0).inserted }
+        guard !added.isEmpty else { return }
+        for url in added where url.startAccessingSecurityScopedResource() { incomingAccess.append(url) }
+        session.start(root: root, incoming: existing + added)
+        selectedIncoming = added.first
+    }
+
+    private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard session.root != nil else {
+            dropNotice = "Open a project folder before dropping images."
+            return false
+        }
+        dropNotice = nil
+        let root = session.root
+        let batch = IncomingDropBatch(count: providers.count) { urls in
+            guard session.root == root else { return }
+            if urls.count != providers.count { dropNotice = "Some dropped files could not be opened. Use Choose Images to try again." }
+            addImages(urls)
+        }
+        for (index, provider) in providers.enumerated() {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                let url = data.flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                Task { @MainActor in batch.receive(url, at: index) }
+            }
+        }
+        return !providers.isEmpty
     }
 
     private func releaseAccess() {
@@ -109,14 +151,14 @@ private struct SessionProgress: View {
                 if session.discovered > 0 {
                     ProgressView(value: Double(session.compared), total: Double(session.discovered))
                 } else { ProgressView().controlSize(.small) }
-                Text("Results are provisional while the search runs.").font(.caption)
+                Text("\(session.decoded) / \(session.results.count) incoming images processed. Results are provisional while the search runs.").font(.caption)
             }
             if let error = session.error { Text(error).foregroundStyle(.red) }
             if session.skipped > 0 {
                 Text("Incomplete scan: \(session.skipped) unreadable or unsupported catalog entries or images were skipped.")
                     .foregroundStyle(.orange).font(.caption)
             }
-            Text("Exact matches only. Resized copies and images with changed transparent padding are not detected.")
+            Text("Exact matches only. Resized copies and images with changed transparent padding are not detected. No matches does not guarantee an image is safe to import.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -125,17 +167,20 @@ private struct SessionProgress: View {
 private struct ComparisonDetail: View {
     let result: IncomingResult
     let root: URL?
-    let provisional: Bool
-    let incomplete: Bool
+    let searchFailed: Bool
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(result.url.lastPathComponent).font(.title)
-                if let error = result.error { Text(error).foregroundStyle(.red) }
+                if let error = result.error {
+                    Text(error).foregroundStyle(.red)
+                } else if searchFailed {
+                    Text("Search failed. Open the project folder again to retry.").foregroundStyle(.red)
+                } else {
+                    Text(result.statusText).accessibilityIdentifier("comparisonStatus")
+                }
                 if result.candidates.isEmpty {
                     ImagePreview(url: result.url, title: "Incoming")
-                    Text(provisional ? "Searching for exact matches…" :
-                         incomplete ? "No matches in the completed portion of the search." : "No matches found")
                 }
                 ForEach(result.candidates) { candidate in
                     CandidateInspection(incoming: result.url, root: root, candidate: candidate)
@@ -210,5 +255,25 @@ private struct ImagePreview: View {
             guard !Task.isCancelled else { return }
             preview = thumbnail.map { LoadedPreview(url: url, image: NSImage(cgImage: $0, size: .zero)) }
         }
+    }
+}
+
+/// Keep provider completion order from changing the incoming list's order.
+@MainActor
+private final class IncomingDropBatch {
+    private var urls: [URL?]
+    private var remaining: Int
+    private let completion: ([URL]) -> Void
+
+    init(count: Int, completion: @escaping ([URL]) -> Void) {
+        urls = Array(repeating: nil, count: count)
+        remaining = count
+        self.completion = completion
+    }
+
+    func receive(_ url: URL?, at index: Int) {
+        urls[index] = url
+        remaining -= 1
+        if remaining == 0 { completion(urls.compactMap { $0 }) }
     }
 }

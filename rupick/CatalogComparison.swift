@@ -122,17 +122,24 @@ enum CatalogComparison {
                                          .workingFormat: CIFormat.RGBAf,
                                          .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
         var incomingFingerprints: [PixelFingerprint?] = []
+        snapshot.phase = "Reading incoming images…"
         for index in incoming.indices {
             if Task.isCancelled { return }
+            snapshot.results[index].status = .decoding
+            await publish(snapshot)
             do {
                 incomingFingerprints.append(try autoreleasepool {
                     PixelFingerprint(try DecodedPixels(url: incoming[index], context: context))
                 })
             }
             catch {
+                snapshot.results[index].status = .unreadable
                 incomingFingerprints.append(nil)
-                snapshot.results[index].error = "Could not read this PNG or JPEG. Choose a readable image (up to 16 megapixels)."
+                snapshot.results[index].error = "Could not read this PNG or JPEG. Check file access or choose another image, up to 16 megapixels and 8,192 pixels per side."
             }
+            if snapshot.results[index].error == nil { snapshot.results[index].status = .comparing }
+            snapshot.decoded += 1
+            await publish(snapshot)
         }
         snapshot.phase = "Comparing image assets…"
         await publish(snapshot)

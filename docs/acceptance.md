@@ -1,4 +1,4 @@
-# Exact-match acceptance
+# Exact-match and batch acceptance
 
 The agreed seams are the observable `ProjectSession` and the running native macOS app, as specified in #3 and implemented for #4. No matching-helper or cache-layout tests are used.
 
@@ -21,8 +21,16 @@ swiftc -swift-version 6 -parse-as-library \
 
 It also re-encodes the duplicate with different metadata and adds a corrupt input. It fails on a missed or changed duplicate result, a false exact match, an unreadable valid input, an unreported corrupt input, or a scan failure. Progress and main-actor heartbeats verify the session remains responsive. This executable is supplemental: the native UI test remains the primary acceptance path and exercises sandbox access through actual file panels.
 
-To repeat native UI acceptance against another project, create `/tmp/rupick-acceptance.json` locally with keys `root`, `duplicate`, and `newImage`, each containing an absolute path. Run `rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided` through Xcode or `xcodebuild -only-testing:rupickUITests/rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided`. Without that file the optional test is skipped. Remove it afterward. Never commit this config, project images, paths, screenshots, test bundles, or logs from confidential projects.
+To repeat native UI acceptance against another project, create `/tmp/rupick-acceptance.json` locally with keys `root`, `duplicate`, and `newImage`, each containing an absolute path. Optionally add `batchFolder`, a folder containing the duplicate, new PNG/JPEG inputs, and `broken.png` (invalid image bytes), to exercise multi-selection and failure isolation. Run `rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided` through Xcode or `xcodebuild -only-testing:rupickUITests/rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided`. Without that file the optional test is skipped. Remove it afterward. Never commit this config, project images, paths, screenshots, test bundles, or logs from confidential projects.
 
 During a large search, navigate existing results, open the image panel, cancel it, and select another incoming image. Confirm progress continues, provisional matches appear, and variant controls remain usable. Compare checksums of catalog contents before and after validation to confirm the project is untouched.
 
 The deployment target is macOS 15 on Apple silicon (arm64). Debug and arm64 Release builds validate the deployment target and SDK availability checks. Runtime validation is performed on macOS 26.7.1 with Xcode 27.0 on Apple silicon; a macOS 15 runtime is unavailable in the current environment. Testing on that minimum runtime remains a release validation item, not a claimed test result.
+
+## Batch acceptance (#5)
+
+Native UI fixtures exercise multiple selection of the Incoming folder and a Finder batch drop, then navigate from a corrupt image to a duplicate and a new image. They also generate a JPEG input locally. The corrupt image shows recovery guidance without a no-match status; valid comparisons continue. Skipped catalog entries retain an incomplete-scan summary, and zero candidates are labelled incomplete rather than No matches found. The session boundary also covers a missing project root, cancellation, obsolete work, duplicate input URLs, and independent per-image statuses.
+
+Finder drops accept local PNG/JPEG file URLs, preserve the drop order, and add each URL only once. Open a project first; unsupported dropped files and provider failures show recovery guidance. The image picker and Finder drops share the same ingestion path.
+
+All zero-match messaging describes the search result only. The visible exact-match limitation explicitly says that no matches does not guarantee an image is safe to import. A failed scan, cancelled search, skipped catalog files, and provisional comparison never use the completed No matches found state.

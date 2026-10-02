@@ -6,6 +6,55 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ProjectSessionTests {
+    @Test func mixedBatchHasIndependentCompletionAndFailureStates() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let duplicate = try fixture.image("duplicate.png")
+        let newImage = try fixture.image("new.jpg", pixels: [0, 255, 0, 255])
+        let broken = fixture.root.appendingPathComponent("broken.png")
+        try Data("invalid".utf8).write(to: broken)
+        try fixture.asset("Assets.xcassets/Good.imageset", images: [duplicate])
+        let session = ProjectSession()
+        let work = session.start(root: fixture.root, incoming: [duplicate, broken, newImage, duplicate])
+        #expect(session.results.count == 3)
+        #expect(session.results.allSatisfy { $0.status == .waiting })
+        await work.value
+        #expect(session.results.map(\.status) == [.complete, .unreadable, .complete])
+        #expect(session.results.map { $0.candidates.count } == [1, 0, 0])
+        #expect(session.results[1].statusText == "Image unavailable")
+        #expect(session.results[2].statusText == "No matches found")
+    }
+
+    @Test func skippedCatalogMakesValidBatchResultsIncomplete() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let duplicate = try fixture.image("duplicate.png")
+        let newImage = try fixture.image("new.png", pixels: [0, 255, 0, 255])
+        let broken = fixture.root.appendingPathComponent("broken.png")
+        try Data("invalid".utf8).write(to: broken)
+        try fixture.asset("Assets.xcassets/Good.imageset", images: [duplicate])
+        try fixture.asset("Assets.xcassets/Bad.imageset", images: [broken])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [duplicate, newImage, broken]).value
+        #expect(session.state == .complete)
+        #expect(session.isIncomplete)
+        #expect(session.skipped == 1)
+        #expect(session.decoded == 3)
+        #expect(session.results.map(\.status) == [.incomplete, .incomplete, .unreadable])
+        #expect(session.results[0].candidates.count == 1)
+        #expect(session.results[1].statusText == "Incomplete search · 0 matches so far")
+    }
+
+    @Test func failedScanDoesNotCompleteIncomingComparisons() async {
+        let session = ProjectSession()
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        await session.start(root: missing, incoming: [missing.appendingPathComponent("incoming.png")]).value
+        #expect(session.state == .failed)
+        #expect(session.isIncomplete)
+        #expect(session.results[0].status == .incomplete)
+        #expect(session.results[0].statusText != "No matches found")
+    }
+
     @Test func renamedImageMatchesCatalogEntry() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
@@ -145,12 +194,16 @@ struct ProjectSessionTests {
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while session.compared == 0 && session.isRunning && ContinuousClock.now < deadline { await Task.yield() }
         #expect(session.isRunning)
+        #expect(session.results[0].status == .comparing)
+        #expect(session.decoded == 1)
         #expect(session.compared > 0 && session.compared < session.discovered)
         #expect(!session.results[0].candidates.isEmpty)
         session.cancel()
         await task.value
         #expect(!session.isRunning)
         #expect(session.phase.contains("incomplete"))
+        #expect(session.results[0].status == .incomplete)
+        #expect(session.state == .cancelled)
     }
 
     @Test func missingRootIsAFailureRatherThanNoMatches() async throws {
