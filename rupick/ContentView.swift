@@ -92,13 +92,17 @@ struct ContentView: View {
         panel.allowsMultipleSelection = true
         panel.begin { response in
             guard response == .OK else { return }
+            dropNotice = nil
             addImages(panel.urls)
         }
     }
 
     private func addImages(_ urls: [URL]) {
         guard let root = session.root else { return }
-        let images = urls.filter { $0.isFileURL && ["png", "jpg", "jpeg"].contains($0.pathExtension.lowercased()) }
+        let images = urls.filter { url in
+            guard url.isFileURL, let type = UTType(filenameExtension: url.pathExtension) else { return false }
+            return type.conforms(to: .png) || type.conforms(to: .jpeg)
+        }
         if images.count != urls.count { dropNotice = "Some files were not added. Choose PNG or JPEG files." }
         let existing = session.results.map(\.url)
         var seen = Set(existing)

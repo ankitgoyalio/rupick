@@ -10,9 +10,7 @@ final class rupickUITests: XCTestCase {
     func testNativePickersAndRepresentationInspection() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-ui-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
-        try FileManager.default.copyItem(at: fixture, to: root)
+        try copyFixture(to: root)
         try addJPEG(to: root)
         let app = XCUIApplication()
         app.launch()
@@ -39,9 +37,7 @@ final class rupickUITests: XCTestCase {
     func testMixedBatchPickerAndListNavigation() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-batch-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
-        try FileManager.default.copyItem(at: fixture, to: root)
+        try copyFixture(to: root)
         try addJPEG(to: root)
         let app = XCUIApplication()
         app.launch()
@@ -61,9 +57,7 @@ final class rupickUITests: XCTestCase {
             try? FileManager.default.removeItem(at: root)
             try? FileManager.default.removeItem(at: input)
         }
-        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
-        try FileManager.default.copyItem(at: fixture, to: root)
+        try copyFixture(to: root)
         try FileManager.default.removeItem(at: root.appendingPathComponent("App/Primary.xcassets/Broken.imageset"))
         try FileManager.default.copyItem(at: root.appendingPathComponent("Incoming/new.png"), to: input)
         let app = XCUIApplication()
@@ -87,9 +81,7 @@ final class rupickUITests: XCTestCase {
     func testFinderBatchDrop() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-drop-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
-        try FileManager.default.copyItem(at: fixture, to: root)
+        try copyFixture(to: root)
         try addJPEG(to: root)
         let app = XCUIApplication()
         app.launch()
@@ -114,6 +106,12 @@ final class rupickUITests: XCTestCase {
         finder.typeKey("w", modifierFlags: .command)
     }
 
+    private func copyFixture(to root: URL) throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
+        try FileManager.default.copyItem(at: fixture, to: root)
+    }
+
     private func addJPEG(to root: URL) throws {
         let input = root.appendingPathComponent("Incoming/new.png")
         let output = root.appendingPathComponent("Incoming/new.jpg")
@@ -122,11 +120,12 @@ final class rupickUITests: XCTestCase {
         let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(output as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
         CGImageDestinationAddImage(destination, image, nil)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
+        try FileManager.default.copyItem(at: output, to: root.appendingPathComponent("Incoming/new.jpe"))
     }
 
     @MainActor
     private func assertMixedBatch(in app: XCUIApplication) {
-        for name in ["broken.png", "renamed.png", "new.png", "new.jpg"] {
+        for name in ["broken.png", "renamed.png", "new.png", "new.jpg", "new.jpe"] {
             XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "incoming-" + name).firstMatch.waitForExistence(timeout: 30))
         }
         let broken = app.staticTexts["broken.png"].firstMatch
