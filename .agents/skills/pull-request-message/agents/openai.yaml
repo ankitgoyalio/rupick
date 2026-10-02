@@ -1,0 +1,3 @@
+interface:
+  display_name: "Pull Request Message"
+  short_description: "Draft reviewer-ready PR and MR descriptions"
