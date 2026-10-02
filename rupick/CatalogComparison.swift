@@ -176,9 +176,12 @@ enum CatalogComparison {
                 for image in contents.images {
                     guard let filename = image.filename else { continue }
                     let url = entry.appendingPathComponent(filename)
+                    guard url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
+                        snapshot.skipped += 1; continue
+                    }
                     if try ignoreRules.ignores(url, isDirectory: false) { continue }
-                    guard withinRoot(url), url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL,
-                          try url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+                    guard withinRoot(url),
+                          (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
                         snapshot.skipped += 1; continue
                     }
                     if Task.isCancelled { return }
@@ -203,6 +206,13 @@ enum CatalogComparison {
                     variants.append((url, image.label, matchingInputs ?? []))
                 }
                 let location = String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1))
+                func candidate(matchingIDs: Set<String>) -> AssetCandidate {
+                    AssetCandidate(id: entry.path, name: entry.deletingPathExtension().lastPathComponent,
+                        location: location, representations: variants.map {
+                            Representation(id: $0.url.path + $0.label, url: $0.url, label: $0.label,
+                                           matches: matchingIDs.contains($0.url.path + $0.label))
+                        })
+                }
                 // An asset appears once in each content group, with all its alternatives available.
                 var updated = Set<String>()
                 for content in entryBuckets {
@@ -211,11 +221,7 @@ enum CatalogComparison {
                     let matchingIDs = Set(entryBuckets.filter {
                         $0.fingerprint == content.fingerprint && $0.index == content.index
                     }.map(\.representationID))
-                    let member = AssetCandidate(id: entry.path, name: entry.deletingPathExtension().lastPathComponent,
-                        location: location, representations: variants.map {
-                            Representation(id: $0.url.path + $0.label, url: $0.url, label: $0.label,
-                                           matches: matchingIDs.contains($0.url.path + $0.label))
-                        })
+                    let member = candidate(matchingIDs: matchingIDs)
                     buckets[content.fingerprint]![content.index].members.append(member)
                     let bucket = buckets[content.fingerprint]![content.index]
                     if bucket.members.count >= 2 {
@@ -227,13 +233,8 @@ enum CatalogComparison {
                 }
                 for index in incoming.indices {
                     guard variants.contains(where: { $0.matchingInputs.contains(index) }) else { continue }
-                    let representations = variants.map {
-                        Representation(id: $0.url.path + $0.label, url: $0.url, label: $0.label,
-                                       matches: $0.matchingInputs.contains(index))
-                    }
-                    snapshot.results[index].candidates.append(AssetCandidate(id: entry.path,
-                        name: entry.deletingPathExtension().lastPathComponent,
-                        location: String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1)), representations: representations))
+                    let matchingIDs = Set(variants.filter { $0.matchingInputs.contains(index) }.map { $0.url.path + $0.label })
+                    snapshot.results[index].candidates.append(candidate(matchingIDs: matchingIDs))
                 }
             } catch { snapshot.skipped += 1 }
             snapshot.compared += 1

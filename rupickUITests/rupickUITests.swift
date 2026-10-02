@@ -59,6 +59,34 @@ final class rupickUITests: XCTestCase {
     }
 
     @MainActor
+    func testNativeProjectScanCancellationRetainsProvisionalGroups() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-cancel-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        memset(try XCTUnwrap(bitmap.bitmapData), 255, bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        for index in 0..<100 {
+            let entry = root.appendingPathComponent("Assets.xcassets/Icon\(index).imageset")
+            try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+            try data.write(to: entry.appendingPathComponent("image.png"))
+            try Data(#"{"images":[{"filename":"image.png","scale":"1x"}]}"#.utf8).write(to: entry.appendingPathComponent("Contents.json"))
+        }
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["Cancel Search"].exists)
+        app.buttons["Cancel Search"].click()
+        XCTAssertTrue(app.staticTexts["Search cancelled. Results are incomplete."].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+        XCTAssertFalse(app.staticTexts["No exact duplicates found"].exists)
+        XCTAssertTrue(app.popUpButtons["duplicateMemberPicker"].firstMatch.exists)
+    }
+
+    @MainActor
     func testNativePickersAndRepresentationInspection() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-ui-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -127,6 +155,9 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Search failed"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search failed. Open the project folder again to retry."].exists)
         XCTAssertFalse(app.staticTexts["No matches found"].exists)
+        app.buttons["projectDuplicates"].click()
+        XCTAssertTrue(app.staticTexts["Duplicate scan failed"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["No exact duplicates found"].exists)
     }
 
     @MainActor
@@ -227,7 +258,7 @@ final class rupickUITests: XCTestCase {
         }
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
         if let expectedGroups = config.expectedDuplicateGroups {
-            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "value ENDSWITH %@", "assets with equal content")).count, expectedGroups)
+            XCTAssertTrue(app.staticTexts["\(expectedGroups) exact duplicate groups"].exists)
             if expectedGroups > 0 {
                 XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
                 XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateMemberPicker").count, 2)

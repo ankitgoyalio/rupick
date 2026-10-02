@@ -27,6 +27,7 @@ struct ContentView: View {
                         }.tag(group.id).accessibilityIdentifier("duplicateGroup")
                     }
                 }
+                if !session.results.isEmpty {
                 List(session.results, selection: $selectedIncoming) { result in
                     VStack(alignment: .leading) {
                         Text(result.url.lastPathComponent)
@@ -35,6 +36,7 @@ struct ContentView: View {
                     }
                     .tag(result.url)
                     .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
+                }
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
@@ -178,6 +180,8 @@ private struct SessionProgress: View {
                 Spacer()
                 Text("\(session.compared) / \(session.discovered) assets compared")
             }
+            Text("\(session.duplicateGroups.count) exact duplicate groups")
+                .font(.caption).accessibilityIdentifier("duplicateGroupCount")
             if session.isRunning {
                 if session.discovered > 0 {
                     ProgressView(value: Double(session.compared), total: Double(session.discovered))
@@ -206,27 +210,54 @@ private struct DuplicateInspection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Exact duplicate content").font(.title)
-                Text("\(group.members.count) distinct assets participate in this group.")
+                DuplicateHeader(memberCount: group.members.count)
                 HStack(alignment: .top) {
                     DuplicateMemberPanel(members: group.members, root: root, selectedID: $leftID, fallback: group.members[0])
                     DuplicateMemberPanel(members: group.members, root: root, selectedID: $rightID, fallback: group.members[1])
                 }
-                Text("Participating assets").font(.headline)
-                ForEach(group.members) { member in
-                    VStack(alignment: .leading) {
-                        Text(member.name).font(.headline)
-                        Text(member.location).font(.caption).textSelection(.enabled)
-                        ForEach(member.representations.filter(\.matches)) { representation in
-                            Text("\(representation.url.lastPathComponent) · \(representation.label)")
-                                .font(.caption)
-                        }
-                    }
-                }
+                DuplicateParticipants(members: group.members)
             }.padding()
         }
     }
 
+}
+
+private struct DuplicateHeader: View {
+    let memberCount: Int
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Exact duplicate content").font(.title)
+            Text("\(memberCount) distinct assets participate in this group.")
+        }
+    }
+}
+
+private struct DuplicateParticipants: View {
+    let members: [AssetCandidate]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Participating assets").font(.headline)
+            ForEach(members) { member in
+                DuplicateParticipant(member: member)
+            }
+        }
+    }
+}
+
+private struct DuplicateParticipant: View {
+    let member: AssetCandidate
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(member.name).font(.headline)
+            Text(member.location).font(.caption).textSelection(.enabled)
+            ForEach(member.representations) { representation in
+                if representation.matches {
+                    Text("\(representation.url.lastPathComponent) · \(representation.label)")
+                        .font(.caption)
+                }
+            }
+        }
+    }
 }
 
 private struct DuplicateMemberPanel: View {

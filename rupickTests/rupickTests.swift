@@ -105,6 +105,42 @@ struct ProjectSessionTests {
         #expect(session.isIncomplete)
     }
 
+    @Test func invalidPathsAndSymbolicLinksAreIsolatedFromProjectGroups() async throws {
+        let fixture = try FixtureProject(), outside = try FixtureProject()
+        defer { fixture.remove(); outside.remove() }
+        let image = try fixture.image("red.png")
+        let external = try outside.image("external.png")
+        try fixture.asset("Assets.xcassets/A.imageset", images: [image])
+        try fixture.asset("Assets.xcassets/B.imageset", images: [image])
+        let a = fixture.root.appendingPathComponent("Assets.xcassets/A.imageset")
+        try FileManager.default.createSymbolicLink(at: a.appendingPathComponent("link.png"), withDestinationURL: external)
+        try Data(#"{"images":[{"filename":"variant0.png"},{"filename":"../../../outside.png"},{"filename":"link.png"}]}"#.utf8).write(to: a.appendingPathComponent("Contents.json"))
+        try FileManager.default.createSymbolicLink(at: fixture.root.appendingPathComponent("Linked.xcassets"), withDestinationURL: fixture.root.appendingPathComponent("Assets.xcassets"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: []).value
+        #expect(session.discovered == 2)
+        #expect(session.duplicateGroups.count == 1)
+        #expect(session.duplicateGroups[0].members.map(\.name) == ["A", "B"])
+        #expect(session.skipped == 2)
+    }
+
+    @Test func projectGroupsNormalizeOrientationAndCompareJPEGContent() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let original = try fixture.image("original.png", pixels: [255, 0, 0, 255, 0, 0, 255, 255], width: 2)
+        let rotated = try fixture.image("rotated.png", pixels: [0, 0, 255, 255, 255, 0, 0, 255], width: 1, orientation: 6)
+        let jpeg = try fixture.image("original.jpg")
+        let otherJPEG = try fixture.image("other.jpg", pixels: [0, 255, 0, 255])
+        try fixture.asset("Assets.xcassets/A.imageset", images: [original])
+        try fixture.asset("Assets.xcassets/B.imageset", images: [rotated])
+        try fixture.asset("Assets.xcassets/C.imageset", images: [jpeg])
+        try fixture.asset("Assets.xcassets/D.imageset", images: [jpeg])
+        try fixture.asset("Assets.xcassets/E.imageset", images: [otherJPEG])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: []).value
+        #expect(session.duplicateGroups.map { $0.members.map(\.name) } == [["A", "B"], ["C", "D"]])
+    }
+
     @Test func mixedBatchHasIndependentCompletionAndFailureStates() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
