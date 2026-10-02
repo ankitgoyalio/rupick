@@ -199,7 +199,7 @@ final class rupickUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.exists)
             app.staticTexts["broken.png"].firstMatch.click()
             XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Could not read this PNG")).firstMatch.waitForExistence(timeout: 10))
-            XCTAssertFalse(app.staticTexts["No matches found"].exists)
+            XCTAssertFalse(app.staticTexts["comparisonStatus"].exists)
             app.staticTexts[URL(fileURLWithPath: config.newImage).lastPathComponent].firstMatch.click()
         } else {
             app.buttons["chooseImages"].click()
