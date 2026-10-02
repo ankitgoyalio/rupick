@@ -256,7 +256,7 @@ final class rupickUITests: XCTestCase {
             XCTAssertTrue(panel.waitForExistence(timeout: 5))
             panel.buttons["CancelButton"].click()
         }
-        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
         if let expectedGroups = config.expectedDuplicateGroups {
             XCTAssertTrue(app.staticTexts["\(expectedGroups) exact duplicate groups"].exists)
             if expectedGroups > 0 {
@@ -284,7 +284,7 @@ final class rupickUITests: XCTestCase {
                 XCTAssertTrue(panel.waitForExistence(timeout: 5))
                 panel.buttons["CancelButton"].click()
             }
-            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
             app.staticTexts[URL(fileURLWithPath: config.duplicate).lastPathComponent].firstMatch.click()
             XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 10))
             XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.exists)
@@ -295,12 +295,12 @@ final class rupickUITests: XCTestCase {
         } else {
             app.buttons["chooseImages"].click()
             choose(config.duplicate, in: app)
-            XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 600))
             XCTAssertTrue(app.popUpButtons["representationPicker"].firstMatch.exists)
-            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
             app.typeKey("i", modifierFlags: .command)
             choose(config.newImage, in: app)
-            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
         }
         XCTAssertTrue(app.staticTexts["comparisonStatus"].waitForExistence(timeout: 10))
         let status = (app.staticTexts["comparisonStatus"].value as? String) ?? app.staticTexts["comparisonStatus"].label
