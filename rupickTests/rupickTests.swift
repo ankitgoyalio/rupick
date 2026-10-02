@@ -55,6 +55,87 @@ struct ProjectSessionTests {
         #expect(session.results[0].statusText != "No matches found")
     }
 
+    @Test func ignoredCatalogsDoNotBecomeCandidatesOrIncompleteScans() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        try fixture.asset("App/Assets.xcassets/Good.imageset", images: [incoming])
+        try fixture.asset("Dependencies/Assets.xcassets/Duplicate.imageset", images: [incoming])
+        let broken = fixture.root.appendingPathComponent("broken.png")
+        try Data("invalid".utf8).write(to: broken)
+        try fixture.asset("Dependencies/Assets.xcassets/Broken.imageset", images: [broken])
+        try Data("Dependencies/\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.discovered == 1)
+        #expect(session.results[0].candidates.map(\.name) == ["Good"])
+        #expect(session.skipped == 0)
+        #expect(!session.isIncomplete)
+    }
+
+    @Test func nestedIgnoreRulesReincludeRepresentationsAndKeepExplicitInputs() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        try fixture.asset("Nested/Assets.xcassets/Kept.imageset", images: [incoming, incoming])
+        try fixture.asset("Nested/Assets.xcassets/Omitted.imageset", images: [incoming])
+        try fixture.asset("RootOnly.xcassets/Hidden.imageset", images: [incoming])
+        try fixture.asset("Nested/RootOnly.xcassets/Visible.imageset", images: [incoming])
+        try Data("*.png\n/RootOnly.xcassets/\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        try Data("!variant0.png\nOmitted.imageset/\n".utf8).write(to: fixture.root.appendingPathComponent("Nested/.gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.results[0].error == nil)
+        #expect(session.results[0].candidates.map(\.name) == ["Kept", "Visible"])
+        #expect(session.results[0].candidates[0].representations.count == 1)
+        #expect(session.discovered == 2)
+        #expect(session.skipped == 0)
+    }
+
+    @Test func ignoreGlobsEscapesAndExcludedParentsFollowGitPatterns() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        for path in ["Cache.xcassets/Hidden.imageset", "Deep/Cache.xcassets/Hidden.imageset",
+                     "Generated/A/B/Assets.xcassets/Hidden.imageset", "#literal/Assets.xcassets/Hidden.imageset",
+                     "!literal/Assets.xcassets/Hidden.imageset", "Excluded/Assets.xcassets/Hidden.imageset",
+                     "Space /Assets.xcassets/Hidden.imageset", "App/Assets.xcassets/Icon1.imageset",
+                     "App/Assets.xcassets/Icon2.imageset", "App/Assets.xcassets/IconA.imageset"] {
+            try fixture.asset(path, images: [incoming])
+        }
+        let rules = """
+        # comment
+        **/Cache.xcassets/
+        Generated/**/Assets.xcassets/
+        \\#literal/
+        \\!literal/
+        Excluded/
+        !Excluded/Assets.xcassets/Hidden.imageset/
+        Space\\ /
+        Icon[0-9].imageset/
+        !Icon2.imageset/
+        """
+        try Data((rules + "\nunused   \n").utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.discovered == 2)
+        #expect(session.results[0].candidates.map(\.name) == ["Icon2", "IconA"])
+        #expect(!session.isIncomplete)
+    }
+
+    @Test func unreadableIgnoreRulesFailRatherThanScanIgnoredCatalogs() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        try fixture.asset("Assets.xcassets/Icon.imageset", images: [incoming])
+        try Data([0xff]).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.state == .failed)
+        #expect(session.error?.contains("ignore rules") == true)
+        #expect(session.results[0].status == .incomplete)
+    }
+
     @Test func renamedImageMatchesCatalogEntry() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }

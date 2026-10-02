@@ -110,6 +110,14 @@ final class rupickUITests: XCTestCase {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
         try FileManager.default.copyItem(at: fixture, to: root)
+        let ignoredCatalog = root.appendingPathComponent("Dependencies/Ignored.xcassets")
+        try FileManager.default.createDirectory(at: ignoredCatalog, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: root.appendingPathComponent("App/Primary.xcassets/Icon.imageset"),
+                                         to: ignoredCatalog.appendingPathComponent("IgnoredDuplicate.imageset"))
+        let broken = ignoredCatalog.appendingPathComponent("Broken.imageset")
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        try Data("invalid".utf8).write(to: broken.appendingPathComponent("Contents.json"))
+        try Data("Dependencies/\n".utf8).write(to: root.appendingPathComponent(".gitignore"))
     }
 
     private func addJPEG(to root: URL) throws {
@@ -131,6 +139,8 @@ final class rupickUITests: XCTestCase {
         let broken = app.staticTexts["broken.png"].firstMatch
         XCTAssertTrue(broken.waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["3 / 3 assets compared"].exists)
+        XCTAssertTrue(app.staticTexts["Incomplete scan: 1 unreadable or unsupported catalog entries or images were skipped."].exists)
         broken.click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Could not read this PNG")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["No matches found"].exists)

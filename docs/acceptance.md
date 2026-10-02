@@ -14,7 +14,7 @@ For a larger project, use a renamed copy of a known catalog PNG or JPEG and a kn
 
 ```sh
 swiftc -swift-version 6 -parse-as-library \
-  rupick/ProjectSession.swift rupick/CatalogComparison.swift \
+  rupick/ProjectSession.swift rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift \
   scripts/validate-project.swift -o /tmp/rupick-validate
 /tmp/rupick-validate /path/to/project /path/to/duplicate.png /path/to/new.png
 ```
@@ -36,3 +36,9 @@ Finder drops accept local PNG/JPEG file URLs, preserve the drop order, and add e
 All zero-match messaging describes the search result only. The visible exact-match limitation explicitly says that no matches does not guarantee an image is safe to import. A failed scan, cancelled search, skipped catalog files, and provisional comparison never use the completed No matches found state.
 
 Validation for #5 passed on the local macOS environment: native multi-selection and Finder batch ingestion, PNG/JPEG (including `.jpe`) acceptance, list navigation, side-by-side matches, isolated corrupt input, retained skipped-catalog warnings, completed no-match messaging, and a project removed before comparison. A separate local-project session run found the known duplicate, preserved the metadata/re-encoded match, rejected the known new image, and isolated corruption while publishing progress and main-actor heartbeats. Native local-project batch navigation also passed. Catalog-file checksums were unchanged. Confidential acceptance inputs, configuration, and test artifacts remain outside the repository.
+
+## Project ignore rules
+
+Discovery applies `.gitignore` files from the selected root and its subdirectories, including ordered negation, nested overrides, anchored paths, directory patterns, and wildcard/globstar patterns. Ignored directories are pruned before discovery. Ignored metadata and image representations are excluded from catalog comparison. These intentional exclusions do not count as unreadable/skipped files. Explicit incoming images still compare even when their paths match an ignore rule. Git's internal `.git` directories are excluded.
+
+Rules are evaluated locally inside the app sandbox; no Git executable is required. The selected folder defines the boundary: parent ignore files, global Git excludes, `.git/info/exclude`, and Git's tracked-file index are not consulted. A path matching the project-local rules is excluded even if it was previously committed. Native fixtures include ignored duplicate and corrupt catalogs; session coverage exercises nested overrides, anchoring, negation, escaped literals/spaces, ranges, and globstars.

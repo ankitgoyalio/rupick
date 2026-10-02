@@ -96,6 +96,7 @@ enum CatalogComparison {
             let path = url.resolvingSymlinksInPath().standardizedFileURL.path
             return path.hasPrefix(boundary.path.hasSuffix("/") ? boundary.path : boundary.path + "/")
         }
+        let ignoreRules = ProjectIgnoreRules(root: boundary)
         var entries: [URL] = []
         guard let enumerator = FileManager.default.enumerator(at: boundary,
             includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey], options: [],
@@ -106,12 +107,31 @@ enum CatalogComparison {
         while let url = enumerator.nextObject() as? URL {
             if Task.isCancelled { return }
             let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
-            if values?.isSymbolicLink == true { enumerator.skipDescendants(); continue }
+            if values?.isSymbolicLink == true || url.lastPathComponent == ".git" {
+                enumerator.skipDescendants(); continue
+            }
+            do {
+                if try ignoreRules.ignores(url, isDirectory: values?.isDirectory == true) {
+                    enumerator.skipDescendants(); continue
+                }
+            } catch {
+                snapshot.error = "The project's Git ignore rules could not be read. Check folder access and try again."
+                await publish(snapshot); return
+            }
             if url.pathExtension == "imageset", values?.isDirectory == true {
                 enumerator.skipDescendants()
                 var parent = url.deletingLastPathComponent()
                 while parent.path != boundary.path, parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
-                if parent.pathExtension == "xcassets" { entries.append(url) }
+                if parent.pathExtension == "xcassets" {
+                    do {
+                        if try !ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) {
+                            entries.append(url)
+                        }
+                    } catch {
+                        snapshot.error = "The project's Git ignore rules could not be read. Check folder access and try again."
+                        await publish(snapshot); return
+                    }
+                }
             }
             if entries.count != snapshot.discovered {
                 snapshot.discovered = entries.count
@@ -156,6 +176,7 @@ enum CatalogComparison {
                     guard withinRoot(url), url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
                         snapshot.skipped += 1; continue
                     }
+                    if try ignoreRules.ignores(url, isDirectory: false) { continue }
                     let matchingInputs: Set<Int>? = autoreleasepool {
                         guard let image = try? NormalizedImage(url: url) else { return nil }
                         guard incomingFingerprints.contains(where: {
