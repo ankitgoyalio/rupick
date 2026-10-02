@@ -97,7 +97,8 @@ struct ProjectSessionTests {
         defer { fixture.remove() }
         let incoming = try fixture.image("incoming.png")
         for path in ["Cache.xcassets/Hidden.imageset", "Deep/Cache.xcassets/Hidden.imageset",
-                     "Generated/A/B/Assets.xcassets/Hidden.imageset", "#literal/Assets.xcassets/Hidden.imageset",
+                     "Generated/A/B/Assets.xcassets/Hidden.imageset", "Generated/Assets.xcassets/Hidden.imageset",
+                     "Escaped/Assets.xcassets/Hidden.imageset", "#literal/Assets.xcassets/Hidden.imageset",
                      "!literal/Assets.xcassets/Hidden.imageset", "Excluded/Assets.xcassets/Hidden.imageset",
                      "Space /Assets.xcassets/Hidden.imageset", "App/Assets.xcassets/Icon1.imageset",
                      "App/Assets.xcassets/Icon2.imageset", "App/Assets.xcassets/IconA.imageset"] {
@@ -106,7 +107,8 @@ struct ProjectSessionTests {
         let rules = """
         # comment
         **/Cache.xcassets/
-        Generated/**/Assets.xcassets/
+        Generated/***/Assets.xcassets/
+        Escaped\\/Assets.xcassets/
         \\#literal/
         \\!literal/
         Excluded/
@@ -134,6 +136,24 @@ struct ProjectSessionTests {
         #expect(session.state == .failed)
         #expect(session.error?.contains("ignore rules") == true)
         #expect(session.results[0].status == .incomplete)
+    }
+
+    @Test func ignoringRegularFilesDoesNotPruneSiblingCatalogs() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        for index in 0..<20 {
+            let directory = fixture.root.appendingPathComponent("Folder\(index)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data().write(to: directory.appendingPathComponent(".DS_Store"))
+            try fixture.asset("Folder\(index)/Assets.xcassets/Icon.imageset", images: [incoming])
+        }
+        try Data(".DS_Store\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.discovered == 20)
+        #expect(session.results[0].candidates.count == 20)
+        #expect(!session.isIncomplete)
     }
 
     @Test func renamedImageMatchesCatalogEntry() async throws {

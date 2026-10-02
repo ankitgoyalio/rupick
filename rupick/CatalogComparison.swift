@@ -108,30 +108,26 @@ enum CatalogComparison {
             if Task.isCancelled { return }
             let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
             if values?.isSymbolicLink == true || url.lastPathComponent == ".git" {
-                enumerator.skipDescendants(); continue
+                if values?.isDirectory == true { enumerator.skipDescendants() }
+                continue
             }
             do {
                 if try ignoreRules.ignores(url, isDirectory: values?.isDirectory == true) {
-                    enumerator.skipDescendants(); continue
+                    if values?.isDirectory == true { enumerator.skipDescendants() }
+                    continue
+                }
+                if url.pathExtension == "imageset", values?.isDirectory == true {
+                    enumerator.skipDescendants()
+                    var parent = url.deletingLastPathComponent()
+                    while parent.path != boundary.path, parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
+                    if parent.pathExtension == "xcassets",
+                       try !ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) {
+                        entries.append(url)
+                    }
                 }
             } catch {
                 snapshot.error = "The project's Git ignore rules could not be read. Check folder access and try again."
                 await publish(snapshot); return
-            }
-            if url.pathExtension == "imageset", values?.isDirectory == true {
-                enumerator.skipDescendants()
-                var parent = url.deletingLastPathComponent()
-                while parent.path != boundary.path, parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
-                if parent.pathExtension == "xcassets" {
-                    do {
-                        if try !ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) {
-                            entries.append(url)
-                        }
-                    } catch {
-                        snapshot.error = "The project's Git ignore rules could not be read. Check folder access and try again."
-                        await publish(snapshot); return
-                    }
-                }
             }
             if entries.count != snapshot.discovered {
                 snapshot.discovered = entries.count

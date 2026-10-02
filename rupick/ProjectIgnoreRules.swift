@@ -20,6 +20,15 @@ final class ProjectIgnoreRules {
             guard !pattern.isEmpty, !pattern.hasPrefix("#") else { return nil }
             negated = pattern.hasPrefix("!")
             if negated { pattern.removeFirst() }
+            // An escaped slash remains a path separator in Git patterns.
+            var normalized = ""
+            for character in pattern {
+                if character == "/", normalized.reversed().prefix(while: { $0 == "\\" }).count % 2 == 1 {
+                    normalized.removeLast()
+                }
+                normalized.append(character)
+            }
+            pattern = normalized
             anchored = pattern.hasPrefix("/")
             if anchored { pattern.removeFirst() }
             directoryOnly = pattern.hasSuffix("/")
@@ -51,7 +60,7 @@ final class ProjectIgnoreRules {
             func match(_ ruleIndex: Int, _ pathIndex: Int) -> Bool {
                 guard visited.insert([ruleIndex, pathIndex]).inserted else { return false }
                 if ruleIndex == pattern.count { return pathIndex == path.count }
-                if pattern[ruleIndex] == "**" {
+                if pattern[ruleIndex].count >= 2 && pattern[ruleIndex].allSatisfy({ $0 == "*" }) {
                     if ruleIndex == pattern.count - 1 { return pathIndex < path.count }
                     return match(ruleIndex + 1, pathIndex) ||
                         (pathIndex < path.count && match(ruleIndex, pathIndex + 1))

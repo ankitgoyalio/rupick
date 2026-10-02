@@ -110,6 +110,7 @@ final class rupickUITests: XCTestCase {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
         try FileManager.default.copyItem(at: fixture, to: root)
+        try Data().write(to: root.appendingPathComponent(".DS_Store"))
         let ignoredCatalog = root.appendingPathComponent("Dependencies/Ignored.xcassets")
         try FileManager.default.createDirectory(at: ignoredCatalog, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: root.appendingPathComponent("App/Primary.xcassets/Icon.imageset"),
@@ -117,7 +118,7 @@ final class rupickUITests: XCTestCase {
         let broken = ignoredCatalog.appendingPathComponent("Broken.imageset")
         try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
         try Data("invalid".utf8).write(to: broken.appendingPathComponent("Contents.json"))
-        try Data("Dependencies/\n".utf8).write(to: root.appendingPathComponent(".gitignore"))
+        try Data("Dependencies/\n.DS_Store\n".utf8).write(to: root.appendingPathComponent(".gitignore"))
     }
 
     private func addJPEG(to root: URL) throws {
@@ -173,6 +174,12 @@ final class rupickUITests: XCTestCase {
             panel.buttons["CancelButton"].click()
         }
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+        if let expectedAssets = config.expectedAssets {
+            XCTAssertTrue(app.staticTexts["\(expectedAssets) / \(expectedAssets) assets compared"].exists)
+        }
+        if config.expectedSkipped == 0 {
+            XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Incomplete scan:")).firstMatch.exists)
+        }
         if let batchFolder = config.batchFolder {
             app.buttons["chooseImages"].click()
             choose(batchFolder, in: app, selectAll: true)
@@ -238,4 +245,6 @@ private struct AcceptanceConfig: Decodable {
     let duplicate: String
     let newImage: String
     let batchFolder: String?
+    let expectedAssets: Int?
+    let expectedSkipped: Int?
 }
