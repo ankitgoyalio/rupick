@@ -32,7 +32,10 @@ def generate(root):
     png(incoming / 'partial.png', [255, 0, 0, 1, 50, 60, 70, 0])
     (incoming / 'broken.png').write_bytes(b'not an image')
     for catalog in ['App/Primary.xcassets', 'Packages/Other.xcassets']:
-        entry = root / catalog / 'Icon.imageset'
+        catalog_root = root / catalog
+        catalog_root.mkdir(parents=True, exist_ok=True)
+        (catalog_root / 'Contents.json').write_text(json.dumps({'info': {'version': 1, 'author': 'xcode'}}, indent=2))
+        entry = catalog_root / 'Icon.imageset'
         png(entry / 'light.png', red)
         png(entry / 'dark.png', [0, 0, 255, 255, 0, 0, 0, 0])
         (entry / 'Contents.json').write_text(json.dumps({'images': [

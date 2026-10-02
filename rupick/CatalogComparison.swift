@@ -4,12 +4,12 @@ import ImageIO
 import UniformTypeIdentifiers
 import CryptoKit
 
-private struct DecodedPixels: Equatable {
+private struct NormalizedImage {
+    let image: CIImage
     let width: Int
     let height: Int
-    let values: [Float]
 
-    init(url: URL, context: CIContext) throws {
+    init(url: URL) throws {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let type = CGImageSourceGetType(source),
               [UTType.png.identifier, UTType.jpeg.identifier].contains(type as String),
@@ -18,23 +18,42 @@ private struct DecodedPixels: Equatable {
         }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
         let orientation = (properties?[kCGImagePropertyOrientation as String] as? NSNumber)?.int32Value ?? 1
-        let image = CIImage(cgImage: cgImage).oriented(forExifOrientation: orientation)
-        let width = Int(image.extent.width), height = Int(image.extent.height)
-        self.width = width; self.height = height
+        image = CIImage(cgImage: cgImage).oriented(forExifOrientation: orientation)
+        width = Int(image.extent.width); height = Int(image.extent.height)
         // Bound temporary decode memory; an oversized file is reported, never called a non-match.
         guard width > 0, height > 0, width <= 8192, height <= 8192,
               width * height <= 16_777_216 else { throw CocoaError(.fileReadTooLarge) }
+    }
+}
+
+private struct DecodedPixels: Equatable {
+    let width: Int
+    let height: Int
+    let values: [Float]
+
+    init(url: URL, context: CIContext) throws {
+        self.init(image: try NormalizedImage(url: url), context: context)
+    }
+
+    init(image: NormalizedImage, context: CIContext) {
+        let width = image.width, height = image.height
+        self.width = width; self.height = height
         var pixels = [Float](repeating: 0, count: width * height * 4)
         pixels.withUnsafeMutableBytes {
-            context.render(image, toBitmap: $0.baseAddress!, rowBytes: width * 16,
-                           bounds: image.extent, format: .RGBAf,
+            context.render(image.image, toBitmap: $0.baseAddress!, rowBytes: width * 16,
+                           bounds: image.image.extent, format: .RGBAf,
                            colorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!)
         }
-        for offset in stride(from: 0, to: pixels.count, by: 4) where pixels[offset + 3] == 0 {
-            pixels[offset] = 0; pixels[offset + 1] = 0; pixels[offset + 2] = 0
+        pixels.withUnsafeMutableBufferPointer { buffer in
+            let pointer = buffer.baseAddress!
+            for offset in stride(from: 0, to: buffer.count, by: 4) {
+                if pointer[offset + 3] == 0 {
+                    pointer[offset] = 0; pointer[offset + 1] = 0; pointer[offset + 2] = 0
+                }
+                // Float equality treats negative zero as zero. Canonicalize it before hashing.
+                for channel in 0..<4 where pointer[offset + channel] == 0 { pointer[offset + channel] = 0 }
+            }
         }
-        // Float equality treats negative zero as zero; keep its byte representation canonical too.
-        for offset in pixels.indices where pixels[offset] == 0 { pixels[offset] = 0 }
         values = pixels
     }
 }
@@ -75,7 +94,7 @@ enum CatalogComparison {
         }
         func withinRoot(_ url: URL) -> Bool {
             let path = url.resolvingSymlinksInPath().standardizedFileURL.path
-            return path.hasPrefix(boundary.path + "/")
+            return path.hasPrefix(boundary.path.hasSuffix("/") ? boundary.path : boundary.path + "/")
         }
         var entries: [URL] = []
         guard let enumerator = FileManager.default.enumerator(at: boundary,
@@ -87,11 +106,11 @@ enum CatalogComparison {
         while let url = enumerator.nextObject() as? URL {
             if Task.isCancelled { return }
             let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
-            if values?.isSymbolicLink == true || !withinRoot(url) { enumerator.skipDescendants(); continue }
+            if values?.isSymbolicLink == true { enumerator.skipDescendants(); continue }
             if url.pathExtension == "imageset", values?.isDirectory == true {
                 enumerator.skipDescendants()
                 var parent = url.deletingLastPathComponent()
-                while withinRoot(parent), parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
+                while parent.path != boundary.path, parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
                 if parent.pathExtension == "xcassets" { entries.append(url) }
             }
             if entries.count != snapshot.discovered {
@@ -131,7 +150,11 @@ enum CatalogComparison {
                         snapshot.skipped += 1; continue
                     }
                     let matchingInputs: Set<Int>? = autoreleasepool {
-                        guard let pixels = try? DecodedPixels(url: url, context: context) else { return nil }
+                        guard let image = try? NormalizedImage(url: url) else { return nil }
+                        guard incomingFingerprints.contains(where: {
+                            $0?.width == image.width && $0?.height == image.height
+                        }) else { return [] }
+                        let pixels = DecodedPixels(image: image, context: context)
                         let fingerprint = PixelFingerprint(pixels)
                         // Hash only narrows the search. Verify every actual match with component equality.
                         return Set(incoming.indices.filter { index in
@@ -150,7 +173,7 @@ enum CatalogComparison {
                     }
                     snapshot.results[index].candidates.append(AssetCandidate(id: entry.path,
                         name: entry.deletingPathExtension().lastPathComponent,
-                        location: String(entry.path.dropFirst(boundary.path.count + 1)), representations: representations))
+                        location: String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1)), representations: representations))
                 }
             } catch { snapshot.skipped += 1 }
             snapshot.compared += 1

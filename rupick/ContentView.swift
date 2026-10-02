@@ -25,7 +25,7 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
             if let result = session.results.first(where: { $0.url == selectedIncoming }) {
-                ComparisonDetail(result: result, provisional: session.isRunning,
+                ComparisonDetail(result: result, root: session.root, provisional: session.isRunning,
                                  incomplete: session.skipped > 0 || session.error != nil || session.phase.hasPrefix("Search cancelled"))
             } else {
                 ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
@@ -117,6 +117,7 @@ private struct SessionProgress: View {
 
 private struct ComparisonDetail: View {
     let result: IncomingResult
+    let root: URL?
     let provisional: Bool
     let incomplete: Bool
     var body: some View {
@@ -130,7 +131,7 @@ private struct ComparisonDetail: View {
                          incomplete ? "No matches in the completed portion of the search." : "No matches found")
                 }
                 ForEach(result.candidates) { candidate in
-                    CandidateInspection(incoming: result.url, candidate: candidate)
+                    CandidateInspection(incoming: result.url, root: root, candidate: candidate)
                 }
             }.padding()
         }
@@ -139,6 +140,7 @@ private struct ComparisonDetail: View {
 
 private struct CandidateInspection: View {
     let incoming: URL
+    let root: URL?
     let candidate: AssetCandidate
     @State private var selectedRepresentation: String?
     private var representation: Representation? {
@@ -158,7 +160,7 @@ private struct CandidateInspection: View {
             if let representation {
                 HStack(alignment: .top, spacing: 16) {
                     ImagePreview(url: incoming, title: "Incoming")
-                    ImagePreview(url: representation.url, title: representation.matches ? "Exact match" : "Alternative representation")
+                    ImagePreview(url: representation.url, title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
                 }
             }
         }.padding().background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
@@ -168,20 +170,29 @@ private struct CandidateInspection: View {
 private struct ImagePreview: View {
     let url: URL
     let title: String
-    @State private var image: NSImage?
+    var accessURL: URL? = nil
+    @State private var preview: LoadedPreview?
+    private struct LoadedPreview {
+        let url: URL
+        let image: NSImage
+    }
     var body: some View {
         VStack {
             Text(title).font(.subheadline)
             ZStack {
                 Rectangle().fill(Color(nsColor: .controlBackgroundColor))
-                if let image {
-                    Image(nsImage: image).resizable().scaledToFit().padding(12)
+                if let preview, preview.url == url {
+                    Image(nsImage: preview.image).resizable().scaledToFit().padding(12)
                 } else { Text("Preview unavailable").foregroundStyle(.secondary) }
             }.frame(height: 230)
             Text(url.lastPathComponent).font(.caption).textSelection(.enabled)
         }.frame(maxWidth: .infinity)
         .task(id: url) {
-            let preview = await Task.detached(priority: .utility) { () -> CGImage? in
+            preview = nil
+            let scope = accessURL ?? url
+            let thumbnail = await Task.detached(priority: .utility) { () -> CGImage? in
+                let acquired = scope.startAccessingSecurityScopedResource()
+                defer { if acquired { scope.stopAccessingSecurityScopedResource() } }
                 guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
                 return CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -190,7 +201,7 @@ private struct ImagePreview: View {
                 ] as CFDictionary)
             }.value
             guard !Task.isCancelled else { return }
-            image = preview.map { NSImage(cgImage: $0, size: .zero) }
+            preview = thumbnail.map { LoadedPreview(url: url, image: NSImage(cgImage: $0, size: .zero)) }
         }
     }
 }

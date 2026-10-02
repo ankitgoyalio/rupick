@@ -44,12 +44,19 @@ final class rupickUITests: XCTestCase {
         app.launch()
         app.buttons["openProject"].click()
         choose(config.root, in: app)
+        if app.buttons["Cancel Search"].exists {
+            app.buttons["chooseImages"].click()
+            let panel = app.windows["open-panel"]
+            XCTAssertTrue(panel.waitForExistence(timeout: 5))
+            panel.buttons["CancelButton"].click()
+        }
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
         app.buttons["chooseImages"].click()
         choose(config.duplicate, in: app)
         XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 180))
         XCTAssertTrue(app.popUpButtons["representationPicker"].firstMatch.exists)
-        app.buttons["chooseImages"].click()
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+        app.typeKey("i", modifierFlags: .command)
         choose(config.newImage, in: app)
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "No matches")).firstMatch.exists)
@@ -58,7 +65,7 @@ final class rupickUITests: XCTestCase {
 
     @MainActor
     private func choose(_ path: String, in app: XCUIApplication) {
-        XCTAssertTrue(app.windows["open-panel"].buttons["OKButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.windows["open-panel"].buttons["OKButton"].waitForExistence(timeout: 15))
         app.typeKey("g", modifierFlags: [.command, .shift])
         let field = app.textFields["PathTextField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))

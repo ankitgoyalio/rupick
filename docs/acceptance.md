@@ -19,10 +19,10 @@ swiftc -swift-version 6 -parse-as-library \
 /tmp/rupick-validate /path/to/project /path/to/duplicate.png /path/to/new.png
 ```
 
-It fails on a missed duplicate, a false exact match, an unreadable input, or a scan failure. Progress and main-actor heartbeats verify the session remains responsive. This executable is supplemental: the native UI test remains the primary acceptance path and exercises sandbox access through actual file panels.
+It also re-encodes the duplicate with different metadata and adds a corrupt input. It fails on a missed or changed duplicate result, a false exact match, an unreadable valid input, an unreported corrupt input, or a scan failure. Progress and main-actor heartbeats verify the session remains responsive. This executable is supplemental: the native UI test remains the primary acceptance path and exercises sandbox access through actual file panels.
 
 To repeat native UI acceptance against another project, create `/tmp/rupick-acceptance.json` locally with keys `root`, `duplicate`, and `newImage`, each containing an absolute path. Run `rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided` through Xcode or `xcodebuild -only-testing:rupickUITests/rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided`. Without that file the optional test is skipped. Remove it afterward. Never commit this config, project images, paths, screenshots, test bundles, or logs from confidential projects.
 
 During a large search, navigate existing results, open the image panel, cancel it, and select another incoming image. Confirm progress continues, provisional matches appear, and variant controls remain usable. Compare checksums of catalog contents before and after validation to confirm the project is untouched.
 
-Builds target macOS 14. Runtime validation is performed on macOS 26.7.1 with Xcode 27.0 on Apple silicon; a macOS 14 runtime and an Intel machine are unavailable in the current environment. These older-runtime and physical Intel checks remain a release validation item, not a claimed test result.
+The deployment target is macOS 14. Debug and universal arm64/x86_64 Release builds validate the deployment target and SDK availability checks. Runtime validation is performed on macOS 26.7.1 with Xcode 27.0 on Apple silicon; a macOS 14 runtime and an Intel machine are unavailable in the current environment. These older-runtime and physical Intel checks remain a release validation item, not a claimed test result.

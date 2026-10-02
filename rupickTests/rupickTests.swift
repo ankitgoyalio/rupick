@@ -162,6 +162,51 @@ struct ProjectSessionTests {
     }
 
 
+    @Test func sixteenBitPrecisionSurvivesLowAlphaNormalization() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        // Literal PNGs: RGBA8 [100,12,250,1], equivalent RGBA16 [25700,3084,64250,257],
+        // and a visible one-component difference RGBA16 [25701,3084,64250,257].
+        let encoded = [
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNI4fnFCAADrgFsrN3y3QAAAABJRU5ErkJggg==",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABEAYAAABPhRjKAAAAEUlEQVR4nGNISeHh+fWLkREADUIC19RxgVgAAAAASUVORK5CYII=",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABEAYAAABPhRjKAAAAEUlEQVR4nGNISeXh+fWLkREADUkC2EudSFcAAAAASUVORK5CYII="
+        ]
+        var incoming: [URL] = []
+        for (index, value) in encoded.enumerated() {
+            let url = fixture.root.appendingPathComponent("precision\(index).png")
+            try #require(Data(base64Encoded: value)).write(to: url)
+            incoming.append(url)
+        }
+        try fixture.asset("Assets.xcassets/LowAlpha.imageset", images: [incoming[0]])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: incoming).value
+        #expect(session.results.map { $0.candidates.count } == [1, 1, 0])
+    }
+
+    @Test func orphanImageSetsAreIgnoredWithoutLeavingRoot() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        try fixture.asset("Orphan.imageset", images: [incoming])
+        try fixture.asset("Nested/Assets.xcassets/Valid.imageset", images: [incoming])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.discovered == 1)
+        #expect(session.results[0].candidates.map(\.name) == ["Valid"])
+    }
+
+    @Test func colourProfilesPreserveVisibleWideGamutDifferences() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let original = try fixture.image("srgb.png")
+        let wideGamut = try fixture.image("wide.png", colorSpace: CGColorSpace(name: CGColorSpace.displayP3)!)
+        try fixture.asset("Assets.xcassets/Red.imageset", images: [original])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [original, wideGamut]).value
+        #expect(session.results.map { $0.candidates.count } == [1, 0])
+    }
+
 }
 
 struct FixtureProject {
@@ -172,12 +217,13 @@ struct FixtureProject {
     }
     func remove() { try? FileManager.default.removeItem(at: root) }
     func image(_ name: String, pixels: [UInt8] = [255, 0, 0, 255], width: Int = 1,
-               orientation: Int = 1, metadata: String? = nil, quality: Double = 1) throws -> URL {
+               orientation: Int = 1, metadata: String? = nil, quality: Double = 1,
+               colorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!) throws -> URL {
         let url = root.appendingPathComponent(name)
         let data = Data(pixels)
         let provider = CGDataProvider(data: data as CFData)!
         let image = CGImage(width: width, height: pixels.count / 4 / width, bitsPerComponent: 8,
-            bitsPerPixel: 32, bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitsPerPixel: 32, bytesPerRow: width * 4, space: colorSpace,
             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue), provider: provider,
             decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
         let type = name.hasSuffix(".jpg") ? UTType.jpeg : UTType.png
