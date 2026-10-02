@@ -141,6 +141,23 @@ struct ProjectSessionTests {
         #expect(session.duplicateGroups.map { $0.members.map(\.name) } == [["A", "B"], ["C", "D"]])
     }
 
+    @Test func repeatedMetadataRowsHaveDistinctRepresentationIdentity() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("red.png")
+        try fixture.asset("Assets.xcassets/A.imageset", images: [image])
+        try fixture.asset("Assets.xcassets/B.imageset", images: [image])
+        let metadata = fixture.root.appendingPathComponent("Assets.xcassets/A.imageset/Contents.json")
+        try Data(#"{"images":[{"filename":"variant0.png","scale":"1x"},{"filename":"variant0.png","scale":"1x"}]}"#.utf8).write(to: metadata)
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: []).value
+        #expect(session.duplicateGroups.count == 1)
+        let representations = session.duplicateGroups[0].members[0].representations
+        #expect(representations.count == 2)
+        #expect(Set(representations.map(\.id)).count == 2)
+        #expect(representations.allSatisfy { $0.matches })
+    }
+
     @Test func mixedBatchHasIndependentCompletionAndFailureStates() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }

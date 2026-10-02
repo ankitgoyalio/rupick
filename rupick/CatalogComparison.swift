@@ -171,9 +171,9 @@ enum CatalogComparison {
                 let contentsURL = entry.appendingPathComponent("Contents.json")
                 guard withinRoot(contentsURL), try contentsURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw CocoaError(.fileReadNoPermission) }
                 let contents = try JSONDecoder().decode(CatalogContents.self, from: Data(contentsOf: contentsURL))
-                var variants: [(url: URL, label: String, matchingInputs: Set<Int>)] = []
+                var variants: [(id: String, url: URL, label: String, matchingInputs: Set<Int>)] = []
                 var entryBuckets: [(fingerprint: PixelFingerprint, index: Int, representationID: String)] = []
-                for image in contents.images {
+                for (imageIndex, image) in contents.images.enumerated() {
                     guard let filename = image.filename else { continue }
                     let url = entry.appendingPathComponent(filename)
                     guard url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
@@ -185,6 +185,7 @@ enum CatalogComparison {
                         snapshot.skipped += 1; continue
                     }
                     if Task.isCancelled { return }
+                    let representationID = url.path + "#" + String(imageIndex)
                     let matchingInputs: Set<Int>? = autoreleasepool { () -> Set<Int>? in
                         guard let normalized = try? NormalizedImage(url: url) else { return nil }
                         let pixels = DecodedPixels(image: normalized, context: context)
@@ -195,7 +196,7 @@ enum CatalogComparison {
                         } ?? contentBuckets.count
                         if bucketIndex == contentBuckets.count { contentBuckets.append(ContentBucket(reference: url)) }
                         buckets[fingerprint] = contentBuckets
-                        entryBuckets.append((fingerprint, bucketIndex, url.path + image.label))
+                        entryBuckets.append((fingerprint, bucketIndex, representationID))
                         // Hash only narrows the search. Verify every actual match with component equality.
                         return Set(incoming.indices.filter { index in
                             guard incomingFingerprints[index] == fingerprint else { return false }
@@ -203,14 +204,14 @@ enum CatalogComparison {
                         })
                     }
                     if matchingInputs == nil { snapshot.skipped += 1 }
-                    variants.append((url, image.label, matchingInputs ?? []))
+                    variants.append((representationID, url, image.label, matchingInputs ?? []))
                 }
                 let location = String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1))
                 func candidate(matchingIDs: Set<String>) -> AssetCandidate {
                     AssetCandidate(id: entry.path, name: entry.deletingPathExtension().lastPathComponent,
                         location: location, representations: variants.map {
-                            Representation(id: $0.url.path + $0.label, url: $0.url, label: $0.label,
-                                           matches: matchingIDs.contains($0.url.path + $0.label))
+                            Representation(id: $0.id, url: $0.url, label: $0.label,
+                                           matches: matchingIDs.contains($0.id))
                         })
                 }
                 // An asset appears once in each content group, with all its alternatives available.
@@ -233,7 +234,7 @@ enum CatalogComparison {
                 }
                 for index in incoming.indices {
                     guard variants.contains(where: { $0.matchingInputs.contains(index) }) else { continue }
-                    let matchingIDs = Set(variants.filter { $0.matchingInputs.contains(index) }.map { $0.url.path + $0.label })
+                    let matchingIDs = Set(variants.filter { $0.matchingInputs.contains(index) }.map(\.id))
                     snapshot.results[index].candidates.append(candidate(matchingIDs: matchingIDs))
                 }
             } catch { snapshot.skipped += 1 }

@@ -28,15 +28,15 @@ struct ContentView: View {
                     }
                 }
                 if !session.results.isEmpty {
-                List(session.results, selection: $selectedIncoming) { result in
-                    VStack(alignment: .leading) {
-                        Text(result.url.lastPathComponent)
-                        Text(result.statusText)
-                            .font(.caption).foregroundStyle(.secondary)
+                    List(session.results, selection: $selectedIncoming) { result in
+                        VStack(alignment: .leading) {
+                            Text(result.url.lastPathComponent)
+                            Text(result.statusText)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .tag(result.url)
+                        .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
                     }
-                    .tag(result.url)
-                    .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
-                }
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
