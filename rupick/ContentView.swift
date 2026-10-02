@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var session = ProjectSession()
     @State private var selectedIncoming: URL?
+    @State private var selectedGroup: String?
     @State private var projectAccess: URL?
     @State private var incomingAccess: [URL] = []
     @State private var dropNotice: String?
@@ -15,6 +16,17 @@ struct ContentView: View {
             VStack(alignment: .leading) {
                 Text(session.root?.lastPathComponent ?? "No project selected")
                     .font(.headline).padding(.horizontal)
+                Button("Project Duplicates") { selectedIncoming = nil }
+                    .accessibilityIdentifier("projectDuplicates").padding(.horizontal)
+                if selectedIncoming == nil {
+                    List(session.duplicateGroups, selection: $selectedGroup) { group in
+                        VStack(alignment: .leading) {
+                            Text("\(group.members.count) assets with equal content")
+                            Text(group.members.map(\.name).joined(separator: ", "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.tag(group.id).accessibilityIdentifier("duplicateGroup")
+                    }
+                }
                 List(session.results, selection: $selectedIncoming) { result in
                     VStack(alignment: .leading) {
                         Text(result.url.lastPathComponent)
@@ -29,9 +41,16 @@ struct ContentView: View {
         } detail: {
             if let result = session.results.first(where: { $0.url == selectedIncoming }) {
                 ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
+            } else if let root = session.root {
+                if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
+                    DuplicateInspection(group: group, root: root).id(group.id)
+                } else {
+                    ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
+                        description: Text("Choose Images to compare incoming images with this project."))
+                }
             } else {
                 ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
-                    description: Text("Choose your project folder, then choose or drop PNG or JPEG images to compare with its image assets."))
+                    description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -68,6 +87,13 @@ struct ContentView: View {
         }
     }
 
+    private var duplicateStatus: String {
+        if session.isRunning { return "Looking for exact duplicates…" }
+        if session.state == .failed { return "Duplicate scan failed" }
+        if session.isIncomplete { return "Incomplete scan · no exact duplicates found so far" }
+        return "No exact duplicates found"
+    }
+
     private func pickProject() {
         let panel = NSOpenPanel()
         panel.title = "Choose a project folder"
@@ -80,6 +106,7 @@ struct ContentView: View {
             releaseAccess()
             if url.startAccessingSecurityScopedResource() { projectAccess = url }
             selectedIncoming = nil
+            selectedGroup = nil
             dropNotice = nil
             session.start(root: url, incoming: [])
         }
@@ -155,15 +182,93 @@ private struct SessionProgress: View {
                 if session.discovered > 0 {
                     ProgressView(value: Double(session.compared), total: Double(session.discovered))
                 } else { ProgressView().controlSize(.small) }
-                Text("\(session.decoded) / \(session.results.count) incoming images processed. Results are provisional while the search runs.").font(.caption)
+                Text("\(session.duplicateGroups.count) provisional duplicate groups. \(session.decoded) / \(session.results.count) incoming images processed. Results are provisional while the search runs.").font(.caption)
             }
             if let error = session.error { Text(error).foregroundStyle(.red) }
             if session.skipped > 0 {
                 Text("Incomplete scan: \(session.skipped) unreadable or unsupported catalog entries or images were skipped.")
                     .foregroundStyle(.orange).font(.caption)
             }
+            Text("Equal content does not mean assets are interchangeable or safe to delete. Project files are read only.")
+                .font(.caption).foregroundStyle(.secondary)
             Text("Exact matches only. Resized copies and images with changed transparent padding are not detected. No matches does not guarantee an image is safe to import.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DuplicateInspection: View {
+    let group: DuplicateGroup
+    let root: URL
+    @State private var leftID: String = ""
+    @State private var rightID: String = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Exact duplicate content").font(.title)
+                Text("\(group.members.count) distinct assets participate in this group.")
+                HStack(alignment: .top) {
+                    DuplicateMemberPanel(members: group.members, root: root, selectedID: $leftID, fallback: group.members[0])
+                    DuplicateMemberPanel(members: group.members, root: root, selectedID: $rightID, fallback: group.members[1])
+                }
+                Text("Participating assets").font(.headline)
+                ForEach(group.members) { member in
+                    VStack(alignment: .leading) {
+                        Text(member.name).font(.headline)
+                        Text(member.location).font(.caption).textSelection(.enabled)
+                        ForEach(member.representations.filter(\.matches)) { representation in
+                            Text("\(representation.url.lastPathComponent) · \(representation.label)")
+                                .font(.caption)
+                        }
+                    }
+                }
+            }.padding()
+        }
+    }
+
+}
+
+private struct DuplicateMemberPanel: View {
+    let members: [AssetCandidate]
+    let root: URL
+    @Binding var selectedID: String
+    let fallback: AssetCandidate
+    var body: some View {
+        let member = members.first { $0.id == selectedID } ?? fallback
+        VStack(alignment: .leading) {
+            Picker("Asset", selection: $selectedID) {
+                Text("\(fallback.name) · \(fallback.location)").tag("")
+                ForEach(members) { candidate in
+                    Text("\(candidate.name) · \(candidate.location)").tag(candidate.id)
+                }
+            }.accessibilityIdentifier("duplicateMemberPicker")
+            DuplicateMemberPreview(member: member, root: root).id(member.id)
+        }.frame(maxWidth: .infinity)
+    }
+}
+
+private struct DuplicateMemberPreview: View {
+    let member: AssetCandidate
+    let root: URL
+    @State private var selectedID = ""
+    private var representation: Representation? {
+        member.representations.first { $0.id == selectedID } ?? member.representations.first(where: \.matches)
+    }
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(member.name).font(.headline)
+            Text(member.location).font(.caption).textSelection(.enabled)
+            Picker("Representation", selection: $selectedID) {
+                Text("Matching representation").tag("")
+                ForEach(member.representations) { variant in
+                    Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
+                }
+            }.accessibilityIdentifier("duplicateRepresentationPicker")
+            if let representation {
+                ImagePreview(url: representation.url,
+                    title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
+            }
         }
     }
 }

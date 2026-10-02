@@ -31,6 +31,21 @@ struct ValidateProject {
         let inputs = [duplicate, URL(fileURLWithPath: args[3]), reencoded, corrupt]
         let session = ProjectSession()
         let started = ContinuousClock.now
+        await session.start(root: root, incoming: []).value
+        guard session.state == .complete else { throw CocoaError(.fileReadUnknown) }
+        let groups = session.duplicateGroups
+        guard groups.allSatisfy({ group in
+            group.members.count >= 2 && Set(group.members.map(\.id)).count == group.members.count &&
+            group.members.allSatisfy { $0.representations.contains(where: \.matches) }
+        }), Set(groups.map(\.id)).count == groups.count else { throw CocoaError(.fileReadCorruptFile) }
+        if let group = groups.first,
+           let reference = group.members.first?.representations.first(where: \.matches)?.url {
+            await session.start(root: root, incoming: [reference]).value
+            guard Set(session.results[0].candidates.map(\.id)) == Set(group.members.map(\.id)) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+        }
+        print("Automatic project scan: \(session.discovered) assets; \(groups.count) duplicate groups; \(session.skipped) skipped. Group membership agrees with incoming comparison.")
         let work = session.start(root: root, incoming: inputs)
         var heartbeats = 0
         let heartbeat = Task { @MainActor in

@@ -6,6 +6,105 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ProjectSessionTests {
+    @Test func openingProjectGroupsDistinctEntriesWithoutIncomingImages() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("red.png")
+        let blue = try fixture.image("blue.png", pixels: [0, 0, 255, 255])
+        try fixture.asset("A.xcassets/Icon.imageset", images: [image, image, blue])
+        try fixture.asset("B.xcassets/Icon.imageset", images: [image])
+        try fixture.asset("B.xcassets/Third.imageset", images: [image])
+        try fixture.asset("B.xcassets/Unique.imageset", images: [blue, blue])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: []).value
+        #expect(session.state == .complete)
+        #expect(session.results.isEmpty)
+        #expect(session.duplicateGroups.count == 2)
+        #expect(session.duplicateGroups.map { $0.members.count }.sorted() == [2, 3])
+        let group = try #require(session.duplicateGroups.first { $0.members.count == 3 })
+        #expect(group.members.map(\.location) == ["A.xcassets/Icon.imageset", "B.xcassets/Icon.imageset", "B.xcassets/Third.imageset"])
+        #expect(group.members[0].representations.map(\.matches) == [true, true, false])
+    }
+
+    @Test(arguments: [
+        ([255, 0, 0, 255, 2, 3, 4, 0], 2, true),
+        ([254, 0, 0, 255, 2, 3, 4, 0], 2, false),
+        ([255, 0, 0, 255, 2, 3, 4, 1], 2, false),
+        ([255, 0, 0, 255, 2, 3, 4, 0], 1, false),
+        ([255, 0, 0, 255, 2, 3, 4, 0, 0, 0, 0, 0], 3, false)
+    ])
+    func projectDuplicatesUseExactNormalizedContent(pixels: [UInt8], width: Int, matches: Bool) async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let original = try fixture.image("original.png", pixels: [255, 0, 0, 255, 90, 80, 70, 0], width: 2)
+        let other = try fixture.image("other.png", pixels: pixels, width: width, metadata: "Different metadata")
+        try fixture.asset("Assets.xcassets/A.imageset", images: [original, original])
+        try fixture.asset("Assets.xcassets/B.imageset", images: [other])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: []).value
+        #expect(session.duplicateGroups.count == (matches ? 1 : 0))
+        #expect(!session.isIncomplete)
+    }
+
+    @Test func ignoredAndUnreadableFilesDoNotHideProjectDuplicates() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("red.png")
+        for name in ["A", "B", "Ignored"] {
+            try fixture.asset("Assets.xcassets/\(name).imageset", images: [image])
+        }
+        let broken = fixture.root.appendingPathComponent("broken.png")
+        try Data("invalid".utf8).write(to: broken)
+        try fixture.asset("Assets.xcassets/Bad.imageset", images: [broken])
+        try fixture.asset("Excluded.xcassets/Bad.imageset", images: [broken])
+        try fixture.asset("Excluded.xcassets/Copy.imageset", images: [image])
+        try Data("Excluded.xcassets/\n**/Ignored.imageset/variant0.png\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: []).value
+        #expect(session.duplicateGroups.count == 1)
+        #expect(session.duplicateGroups[0].members.map(\.name) == ["A", "B"])
+        #expect(session.skipped == 1)
+        #expect(session.isIncomplete)
+        #expect(session.state == .complete)
+    }
+
+    @Test func provisionalProjectGroupsSurviveCancellationAndNewSessionsResetThem() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("red.png")
+        for index in 0..<100 { try fixture.asset("Assets.xcassets/A\(index).imageset", images: [image]) }
+        let session = ProjectSession()
+        let work = session.start(root: fixture.root, incoming: [])
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while session.duplicateGroups.isEmpty && session.isRunning && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(session.isRunning)
+        #expect(!session.duplicateGroups.isEmpty)
+        session.cancel()
+        let retained = session.duplicateGroups
+        await work.value
+        #expect(session.state == .cancelled)
+        #expect(session.isIncomplete)
+        #expect(session.duplicateGroups == retained)
+        let missing = fixture.root.appendingPathComponent("missing")
+        await session.start(root: missing, incoming: []).value
+        #expect(session.state == .failed)
+        #expect(session.duplicateGroups.isEmpty)
+    }
+
+    @Test func missingRepresentationDoesNotDiscardReadableGroupMembers() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("red.png")
+        try fixture.asset("Assets.xcassets/A.imageset", images: [image, image])
+        try fixture.asset("Assets.xcassets/B.imageset", images: [image])
+        try FileManager.default.removeItem(at: fixture.root.appendingPathComponent("Assets.xcassets/A.imageset/variant1.png"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: []).value
+        #expect(session.duplicateGroups.count == 1)
+        #expect(session.skipped == 1)
+        #expect(session.isIncomplete)
+    }
+
     @Test func mixedBatchHasIndependentCompletionAndFailureStates() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
