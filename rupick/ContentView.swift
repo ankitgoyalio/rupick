@@ -38,10 +38,17 @@ struct ContentView: View {
         .toolbar {
             Button("Open Project…", systemImage: "folder") { pickProject() }
                 .accessibilityIdentifier("openProject").keyboardShortcut("o")
+                .help("Choose a project folder and discover its image assets.")
             Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
                 .accessibilityIdentifier("chooseImages").keyboardShortcut("i")
                 .disabled(session.root == nil)
-            if session.isRunning { Button("Cancel Search") { session.cancel() } }
+                .help(session.root == nil
+                      ? Text("Open a project folder first.")
+                      : Text("Choose PNG or JPEG images to find exact matches."))
+            if session.isRunning {
+                Button("Cancel Search") { session.cancel() }
+                    .help("Stop the search and keep the matches found so far.")
+            }
         }
         .frame(minWidth: 950, minHeight: 620)
         .onDisappear {
