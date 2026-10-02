@@ -96,6 +96,7 @@ enum CatalogComparison {
             let path = url.resolvingSymlinksInPath().standardizedFileURL.path
             return path.hasPrefix(boundary.path.hasSuffix("/") ? boundary.path : boundary.path + "/")
         }
+        let ignoreRules = ProjectIgnoreRules(root: boundary)
         var entries: [URL] = []
         guard let enumerator = FileManager.default.enumerator(at: boundary,
             includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey], options: [],
@@ -106,12 +107,27 @@ enum CatalogComparison {
         while let url = enumerator.nextObject() as? URL {
             if Task.isCancelled { return }
             let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
-            if values?.isSymbolicLink == true { enumerator.skipDescendants(); continue }
-            if url.pathExtension == "imageset", values?.isDirectory == true {
-                enumerator.skipDescendants()
-                var parent = url.deletingLastPathComponent()
-                while parent.path != boundary.path, parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
-                if parent.pathExtension == "xcassets" { entries.append(url) }
+            if values?.isSymbolicLink == true || url.lastPathComponent == ".git" {
+                if values?.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+            do {
+                if try ignoreRules.ignores(url, isDirectory: values?.isDirectory == true) {
+                    if values?.isDirectory == true { enumerator.skipDescendants() }
+                    continue
+                }
+                if url.pathExtension == "imageset", values?.isDirectory == true {
+                    enumerator.skipDescendants()
+                    var parent = url.deletingLastPathComponent()
+                    while parent.path != boundary.path, parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
+                    if parent.pathExtension == "xcassets",
+                       try !ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) {
+                        entries.append(url)
+                    }
+                }
+            } catch {
+                snapshot.error = "The project's Git ignore rules could not be read. Check folder access and try again."
+                await publish(snapshot); return
             }
             if entries.count != snapshot.discovered {
                 snapshot.discovered = entries.count
@@ -122,17 +138,24 @@ enum CatalogComparison {
                                          .workingFormat: CIFormat.RGBAf,
                                          .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
         var incomingFingerprints: [PixelFingerprint?] = []
+        snapshot.phase = "Reading incoming images…"
         for index in incoming.indices {
             if Task.isCancelled { return }
+            snapshot.results[index].status = .decoding
+            await publish(snapshot)
             do {
                 incomingFingerprints.append(try autoreleasepool {
                     PixelFingerprint(try DecodedPixels(url: incoming[index], context: context))
                 })
             }
             catch {
+                snapshot.results[index].status = .unreadable
                 incomingFingerprints.append(nil)
-                snapshot.results[index].error = "Could not read this PNG or JPEG. Choose a readable image (up to 16 megapixels)."
+                snapshot.results[index].error = "Could not read this PNG or JPEG. Check file access or choose another image, up to 16 megapixels and 8,192 pixels per side."
             }
+            if snapshot.results[index].error == nil { snapshot.results[index].status = .comparing }
+            snapshot.decoded += 1
+            await publish(snapshot)
         }
         snapshot.phase = "Comparing image assets…"
         await publish(snapshot)
@@ -149,6 +172,7 @@ enum CatalogComparison {
                     guard withinRoot(url), url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
                         snapshot.skipped += 1; continue
                     }
+                    if try ignoreRules.ignores(url, isDirectory: false) { continue }
                     let matchingInputs: Set<Int>? = autoreleasepool {
                         guard let image = try? NormalizedImage(url: url) else { return nil }
                         guard incomingFingerprints.contains(where: {

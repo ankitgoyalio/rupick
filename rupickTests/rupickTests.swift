@@ -6,6 +6,156 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ProjectSessionTests {
+    @Test func mixedBatchHasIndependentCompletionAndFailureStates() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let duplicate = try fixture.image("duplicate.png")
+        let newImage = try fixture.image("new.jpg", pixels: [0, 255, 0, 255])
+        let broken = fixture.root.appendingPathComponent("broken.png")
+        try Data("invalid".utf8).write(to: broken)
+        try fixture.asset("Assets.xcassets/Good.imageset", images: [duplicate])
+        let session = ProjectSession()
+        let work = session.start(root: fixture.root, incoming: [duplicate, broken, newImage, duplicate])
+        #expect(session.results.count == 3)
+        #expect(session.results.allSatisfy { $0.status == .waiting })
+        await work.value
+        #expect(session.results.map(\.status) == [.complete, .unreadable, .complete])
+        #expect(session.results.map { $0.candidates.count } == [1, 0, 0])
+        #expect(session.results[1].statusText == "Image unavailable")
+        #expect(session.results[2].statusText == "No matches found")
+    }
+
+    @Test func skippedCatalogMakesValidBatchResultsIncomplete() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let duplicate = try fixture.image("duplicate.png")
+        let newImage = try fixture.image("new.png", pixels: [0, 255, 0, 255])
+        let broken = fixture.root.appendingPathComponent("broken.png")
+        try Data("invalid".utf8).write(to: broken)
+        try fixture.asset("Assets.xcassets/Good.imageset", images: [duplicate])
+        try fixture.asset("Assets.xcassets/Bad.imageset", images: [broken])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [duplicate, newImage, broken]).value
+        #expect(session.state == .complete)
+        #expect(session.isIncomplete)
+        #expect(session.skipped == 1)
+        #expect(session.decoded == 3)
+        #expect(session.results.map(\.status) == [.incomplete, .incomplete, .unreadable])
+        #expect(session.results[0].candidates.count == 1)
+        #expect(session.results[1].statusText == "Incomplete search · 0 matches so far")
+    }
+
+    @Test func failedScanDoesNotCompleteIncomingComparisons() async {
+        let session = ProjectSession()
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        await session.start(root: missing, incoming: [missing.appendingPathComponent("incoming.png")]).value
+        #expect(session.state == .failed)
+        #expect(session.isIncomplete)
+        #expect(session.results[0].status == .incomplete)
+        #expect(session.results[0].statusText != "No matches found")
+    }
+
+    @Test func ignoredCatalogsDoNotBecomeCandidatesOrIncompleteScans() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        try fixture.asset("App/Assets.xcassets/Good.imageset", images: [incoming])
+        try fixture.asset("Dependencies/Assets.xcassets/Duplicate.imageset", images: [incoming])
+        let broken = fixture.root.appendingPathComponent("broken.png")
+        try Data("invalid".utf8).write(to: broken)
+        try fixture.asset("Dependencies/Assets.xcassets/Broken.imageset", images: [broken])
+        try Data("Dependencies/\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.discovered == 1)
+        #expect(session.results[0].candidates.map(\.name) == ["Good"])
+        #expect(session.skipped == 0)
+        #expect(!session.isIncomplete)
+    }
+
+    @Test func nestedIgnoreRulesReincludeRepresentationsAndKeepExplicitInputs() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        try fixture.asset("Nested/Assets.xcassets/Kept.imageset", images: [incoming, incoming])
+        try fixture.asset("Nested/Assets.xcassets/Omitted.imageset", images: [incoming])
+        try fixture.asset("RootOnly.xcassets/Hidden.imageset", images: [incoming])
+        try fixture.asset("Nested/RootOnly.xcassets/Visible.imageset", images: [incoming])
+        try Data("*.png\n/RootOnly.xcassets/\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        try Data("!variant0.png\nOmitted.imageset/\n".utf8).write(to: fixture.root.appendingPathComponent("Nested/.gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.results[0].error == nil)
+        #expect(session.results[0].candidates.map(\.name) == ["Kept", "Visible"])
+        #expect(session.results[0].candidates[0].representations.count == 1)
+        #expect(session.discovered == 2)
+        #expect(session.skipped == 0)
+    }
+
+    @Test func ignoreGlobsEscapesAndExcludedParentsFollowGitPatterns() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        for path in ["Cache.xcassets/Hidden.imageset", "Deep/Cache.xcassets/Hidden.imageset",
+                     "Generated/A/B/Assets.xcassets/Hidden.imageset", "Generated/Assets.xcassets/Hidden.imageset",
+                     "Escaped/Assets.xcassets/Hidden.imageset", "#literal/Assets.xcassets/Hidden.imageset",
+                     "!literal/Assets.xcassets/Hidden.imageset", "Excluded/Assets.xcassets/Hidden.imageset",
+                     "Space /Assets.xcassets/Hidden.imageset", "App/Assets.xcassets/Icon1.imageset",
+                     "App/Assets.xcassets/Icon2.imageset", "App/Assets.xcassets/IconA.imageset"] {
+            try fixture.asset(path, images: [incoming])
+        }
+        let rules = """
+        # comment
+        **/Cache.xcassets/
+        Generated/***/Assets.xcassets/
+        Escaped\\/Assets.xcassets/
+        \\#literal/
+        \\!literal/
+        Excluded/
+        !Excluded/Assets.xcassets/Hidden.imageset/
+        Space\\ /
+        Icon[0-9].imageset/
+        !Icon2.imageset/
+        """
+        try Data((rules + "\nunused   \n").utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.discovered == 2)
+        #expect(session.results[0].candidates.map(\.name) == ["Icon2", "IconA"])
+        #expect(!session.isIncomplete)
+    }
+
+    @Test func unreadableIgnoreRulesFailRatherThanScanIgnoredCatalogs() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        try fixture.asset("Assets.xcassets/Icon.imageset", images: [incoming])
+        try Data([0xff]).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.state == .failed)
+        #expect(session.error?.contains("ignore rules") == true)
+        #expect(session.results[0].status == .incomplete)
+    }
+
+    @Test func ignoringRegularFilesDoesNotPruneSiblingCatalogs() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let incoming = try fixture.image("incoming.png")
+        for index in 0..<20 {
+            let directory = fixture.root.appendingPathComponent("Folder\(index)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data().write(to: directory.appendingPathComponent(".DS_Store"))
+            try fixture.asset("Folder\(index)/Assets.xcassets/Icon.imageset", images: [incoming])
+        }
+        try Data(".DS_Store\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [incoming]).value
+        #expect(session.discovered == 20)
+        #expect(session.results[0].candidates.count == 20)
+        #expect(!session.isIncomplete)
+    }
+
     @Test func renamedImageMatchesCatalogEntry() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
@@ -145,12 +295,16 @@ struct ProjectSessionTests {
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while session.compared == 0 && session.isRunning && ContinuousClock.now < deadline { await Task.yield() }
         #expect(session.isRunning)
+        #expect(session.results[0].status == .comparing)
+        #expect(session.decoded == 1)
         #expect(session.compared > 0 && session.compared < session.discovered)
         #expect(!session.results[0].candidates.isEmpty)
         session.cancel()
         await task.value
         #expect(!session.isRunning)
         #expect(session.phase.contains("incomplete"))
+        #expect(session.results[0].status == .incomplete)
+        #expect(session.state == .cancelled)
     }
 
     @Test func missingRootIsAFailureRatherThanNoMatches() async throws {
