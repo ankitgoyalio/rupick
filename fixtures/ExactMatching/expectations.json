@@ -1,0 +1,15 @@
+{
+  "assets": 3,
+  "skipped": 1,
+  "matches": {
+    "renamed.png": 2,
+    "hidden-colour.png": 2,
+    "new.png": 0,
+    "resized.png": 0,
+    "padded.png": 0,
+    "partial.png": 0
+  },
+  "errors": [
+    "broken.png"
+  ]
+}
