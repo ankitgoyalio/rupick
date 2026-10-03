@@ -31,7 +31,8 @@ struct ValidateProject {
         let reencoded = temporary.appendingPathComponent("reencoded.png")
         guard let source = CGImageSourceCreateWithURL(duplicate as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-              let destination = CGImageDestinationCreateWithURL(reencoded as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+              let destination = CGImageDestinationCreateWithURL(reencoded as CFURL, UTType.png.identifier as CFString, 1, nil)
+        else {
             throw CocoaError(.fileReadCorruptFile)
         }
         var properties = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]) ?? [:]
@@ -46,7 +47,7 @@ struct ValidateProject {
         let automaticWork = session.start(root: root, incoming: [])
         var automaticHeartbeats = 0
         let automaticHeartbeat = Task { @MainActor in
-            while session.isRunning && !Task.isCancelled {
+            while session.isRunning, !Task.isCancelled {
                 automaticHeartbeats += 1
                 try? await Task.sleep(for: .milliseconds(100))
             }
@@ -57,10 +58,11 @@ struct ValidateProject {
         let groups = session.duplicateGroups
         guard groups.allSatisfy({ group in
             group.members.count >= 2 && Set(group.members.map(\.id)).count == group.members.count &&
-            group.members.allSatisfy { $0.representations.contains(where: \.matches) }
+                group.members.allSatisfy { $0.representations.contains(where: \.matches) }
         }), Set(groups.map(\.id)).count == groups.count else { throw ValidationFailure.invalidGroups }
         if let group = groups.first,
-           let reference = group.members.first?.representations.first(where: \.matches)?.url {
+           let reference = group.members.first?.representations.first(where: \.matches)?.url
+        {
             await session.start(root: root, incoming: [reference]).value
             guard Set(session.results[0].candidates.map(\.id)) == Set(group.members.map(\.id)) else {
                 throw ValidationFailure.inconsistentMembership
@@ -70,7 +72,7 @@ struct ValidateProject {
         let work = session.start(root: root, incoming: inputs)
         var heartbeats = 0
         let heartbeat = Task { @MainActor in
-            while session.isRunning && !Task.isCancelled {
+            while session.isRunning, !Task.isCancelled {
                 heartbeats += 1
                 if heartbeats % 10 == 0 {
                     print("Progress: \(session.compared)/\(session.discovered) assets, \(session.skipped) skipped")
@@ -83,7 +85,8 @@ struct ValidateProject {
         guard session.error == nil, session.results.prefix(3).allSatisfy({ $0.error == nil }),
               session.results[3].error != nil,
               session.results[0].candidates.map(\.id) == session.results[2].candidates.map(\.id),
-              !session.results[0].candidates.isEmpty, session.results[1].candidates.isEmpty else {
+              !session.results[0].candidates.isEmpty, session.results[1].candidates.isEmpty
+        else {
             print("Acceptance failed: scan error, unreadable input, missed duplicate, or false exact match.")
             throw ValidationFailure.incomingComparisonFailed
         }

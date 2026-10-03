@@ -1,8 +1,8 @@
 import Foundation
-import Testing
 import ImageIO
-import UniformTypeIdentifiers
 @testable import rupick
+import Testing
+import UniformTypeIdentifiers
 
 @MainActor
 struct ProjectSessionTests {
@@ -31,7 +31,7 @@ struct ProjectSessionTests {
         ([254, 0, 0, 255, 2, 3, 4, 0], 2, false),
         ([255, 0, 0, 255, 2, 3, 4, 1], 2, false),
         ([255, 0, 0, 255, 2, 3, 4, 0], 1, false),
-        ([255, 0, 0, 255, 2, 3, 4, 0, 0, 0, 0, 0], 3, false)
+        ([255, 0, 0, 255, 2, 3, 4, 0, 0, 0, 0, 0], 3, false),
     ])
     func projectDuplicatesUseExactNormalizedContent(pixels: [UInt8], width: Int, matches: Bool) async throws {
         let fixture = try FixtureProject()
@@ -72,11 +72,15 @@ struct ProjectSessionTests {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
         let image = try fixture.image("red.png")
-        for index in 0..<100 { try fixture.asset("Assets.xcassets/A\(index).imageset", images: [image]) }
+        for index in 0 ..< 100 {
+            try fixture.asset("Assets.xcassets/A\(index).imageset", images: [image])
+        }
         let session = ProjectSession()
         let work = session.start(root: fixture.root, incoming: [])
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-        while session.duplicateGroups.isEmpty && session.isRunning && ContinuousClock.now < deadline { await Task.yield() }
+        while session.duplicateGroups.isEmpty, session.isRunning, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
         #expect(session.isRunning)
         #expect(!session.duplicateGroups.isEmpty)
         session.cancel()
@@ -253,7 +257,8 @@ struct ProjectSessionTests {
                      "Escaped/Assets.xcassets/Hidden.imageset", "#literal/Assets.xcassets/Hidden.imageset",
                      "!literal/Assets.xcassets/Hidden.imageset", "Excluded/Assets.xcassets/Hidden.imageset",
                      "Space /Assets.xcassets/Hidden.imageset", "App/Assets.xcassets/Icon1.imageset",
-                     "App/Assets.xcassets/Icon2.imageset", "App/Assets.xcassets/IconA.imageset"] {
+                     "App/Assets.xcassets/Icon2.imageset", "App/Assets.xcassets/IconA.imageset"]
+        {
             try fixture.asset(path, images: [incoming])
         }
         let rules = """
@@ -282,7 +287,7 @@ struct ProjectSessionTests {
         defer { fixture.remove() }
         let incoming = try fixture.image("incoming.png")
         try fixture.asset("Assets.xcassets/Icon.imageset", images: [incoming])
-        try Data([0xff]).write(to: fixture.root.appendingPathComponent(".gitignore"))
+        try Data([0xFF]).write(to: fixture.root.appendingPathComponent(".gitignore"))
         let session = ProjectSession()
         await session.start(root: fixture.root, incoming: [incoming]).value
         #expect(session.state == .failed)
@@ -294,7 +299,7 @@ struct ProjectSessionTests {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
         let incoming = try fixture.image("incoming.png")
-        for index in 0..<20 {
+        for index in 0 ..< 20 {
             let directory = fixture.root.appendingPathComponent("Folder\(index)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try Data().write(to: directory.appendingPathComponent(".DS_Store"))
@@ -318,12 +323,13 @@ struct ProjectSessionTests {
         #expect(session.isRunning == false)
         #expect(session.results.first?.candidates.map(\.name) == ["Icon"])
     }
+
     @Test(arguments: [
         ([255, 0, 0, 255, 2, 3, 4, 0], 2, true),
         ([254, 0, 0, 255, 2, 3, 4, 0], 2, false),
         ([255, 0, 0, 255, 2, 3, 4, 1], 2, false),
         ([255, 0, 0, 255, 2, 3, 4, 0], 1, false),
-        ([255, 0, 0, 255, 2, 3, 4, 0, 0, 0, 0, 0], 3, false)
+        ([255, 0, 0, 255, 2, 3, 4, 0, 0, 0, 0, 0], 3, false),
     ])
     func exactPixelRules(pixels: [UInt8], width: Int, matches: Bool) async throws {
         let fixture = try FixtureProject()
@@ -409,7 +415,7 @@ struct ProjectSessionTests {
         let incoming = try outside.image("incoming.png")
         try outside.asset("External.xcassets/Icon.imageset", images: [incoming])
         try FileManager.default.createSymbolicLink(at: fixture.root.appendingPathComponent("External.xcassets"),
-                                                  withDestinationURL: outside.root.appendingPathComponent("External.xcassets"))
+                                                   withDestinationURL: outside.root.appendingPathComponent("External.xcassets"))
         try fixture.asset("Local.xcassets/Escape.imageset", images: [incoming])
         let representation = fixture.root.appendingPathComponent("Local.xcassets/Escape.imageset/variant0.png")
         try FileManager.default.removeItem(at: representation)
@@ -439,13 +445,15 @@ struct ProjectSessionTests {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
         let incoming = try fixture.image("incoming.png")
-        for index in 0..<100 {
+        for index in 0 ..< 100 {
             try fixture.asset("Assets.xcassets/Icon\(index).imageset", images: [incoming])
         }
         let session = ProjectSession()
         let task = session.start(root: fixture.root, incoming: [incoming])
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-        while session.compared == 0 && session.isRunning && ContinuousClock.now < deadline { await Task.yield() }
+        while session.compared == 0, session.isRunning, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
         #expect(session.isRunning)
         #expect(session.results[0].status == .comparing)
         #expect(session.decoded == 1)
@@ -459,14 +467,13 @@ struct ProjectSessionTests {
         #expect(session.state == .cancelled)
     }
 
-    @Test func missingRootIsAFailureRatherThanNoMatches() async throws {
+    @Test func missingRootIsAFailureRatherThanNoMatches() async {
         let session = ProjectSession()
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         await session.start(root: missing, incoming: []).value
         #expect(session.error != nil)
         #expect(session.phase == "Search failed")
     }
-
 
     @Test func sixteenBitPrecisionSurvivesLowAlphaNormalization() async throws {
         let fixture = try FixtureProject()
@@ -476,7 +483,7 @@ struct ProjectSessionTests {
         let encoded = [
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNI4fnFCAADrgFsrN3y3QAAAABJRU5ErkJggg==",
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABEAYAAABPhRjKAAAAEUlEQVR4nGNISeHh+fWLkREADUIC19RxgVgAAAAASUVORK5CYII=",
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABEAYAAABPhRjKAAAAEUlEQVR4nGNISeXh+fWLkREADUkC2EudSFcAAAAASUVORK5CYII="
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABEAYAAABPhRjKAAAAEUlEQVR4nGNISeXh+fWLkREADUkC2EudSFcAAAAASUVORK5CYII=",
         ]
         var incoming: [URL] = []
         for (index, value) in encoded.enumerated() {
@@ -506,13 +513,12 @@ struct ProjectSessionTests {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
         let original = try fixture.image("srgb.png")
-        let wideGamut = try fixture.image("wide.png", colorSpace: CGColorSpace(name: CGColorSpace.displayP3)!)
+        let wideGamut = try fixture.image("wide.png", colorSpace: #require(CGColorSpace(name: CGColorSpace.displayP3)))
         try fixture.asset("Assets.xcassets/Red.imageset", images: [original])
         let session = ProjectSession()
         await session.start(root: fixture.root, incoming: [original, wideGamut]).value
         #expect(session.results.map { $0.candidates.count } == [1, 0])
     }
-
 }
 
 struct FixtureProject {
@@ -521,26 +527,34 @@ struct FixtureProject {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
-    func remove() { try? FileManager.default.removeItem(at: root) }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: root)
+    }
+
     func image(_ name: String, pixels: [UInt8] = [255, 0, 0, 255], width: Int = 1,
                orientation: Int = 1, metadata: String? = nil, quality: Double = 1,
-               colorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!) throws -> URL {
+               colorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!) throws -> URL
+    {
         let url = root.appendingPathComponent(name)
         let data = Data(pixels)
         let provider = CGDataProvider(data: data as CFData)!
         let image = CGImage(width: width, height: pixels.count / 4 / width, bitsPerComponent: 8,
-            bitsPerPixel: 32, bytesPerRow: width * 4, space: colorSpace,
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue), provider: provider,
-            decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+                            bitsPerPixel: 32, bytesPerRow: width * 4, space: colorSpace,
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue), provider: provider,
+                            decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
         let type = name.hasSuffix(".jpg") ? UTType.jpeg : UTType.png
         let destination = CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil)!
         var properties: [CFString: Any] = [kCGImagePropertyOrientation: orientation,
-                                          kCGImageDestinationLossyCompressionQuality: quality]
-        if let metadata { properties[kCGImagePropertyPNGDictionary] = [kCGImagePropertyPNGDescription: metadata] }
+                                           kCGImageDestinationLossyCompressionQuality: quality]
+        if let metadata {
+            properties[kCGImagePropertyPNGDictionary] = [kCGImagePropertyPNGDescription: metadata]
+        }
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
         return url
     }
+
     func asset(_ path: String, images: [URL]) throws {
         let folder = root.appendingPathComponent(path)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
