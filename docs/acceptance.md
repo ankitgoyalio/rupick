@@ -8,13 +8,14 @@ The agreed seams are the observable `ProjectSession` and the running native macO
 python3 scripts/make-fixtures.py fixtures/ExactMatching
 ```
 
-For manual native acceptance, run Rupick, use **Open Project…** to select the fixture root, and use **Choose Images…** for the Incoming files. Renamed and hidden-colour images each yield two distinct Icon entries; the remaining valid inputs yield no matches, and broken.png shows an error. Inspect the incoming and candidate images side by side, select the 2x dark alternative, and verify it is labelled Alternative. Check that the incomplete-scan notice remains visible for the broken catalog, and that the exact-only limitation appears at the bottom.
+For manual native acceptance, run Rupick, use **Open Project…** to select the fixture root, and use **Choose Images…** for the Incoming files. Renamed and hidden-colour images each yield two distinct Icon entries; the remaining valid inputs yield no matches, and broken.png shows an error. Select an incoming image in the sidebar, inspect it and the candidate images side by side, select the 2x dark alternative, and verify it is labelled Alternative. Check that the incomplete-scan notice remains visible for the broken catalog, and that the exact-only limitation appears at the bottom.
 
 For a larger project, use a renamed copy of a known catalog PNG or JPEG and a known new PNG or JPEG, keeping these copies outside the project. Compile and run the **same session implementation** through the local validation executable:
 
 ```sh
 swiftc -swift-version 6 -parse-as-library \
-  rupick/ProjectSession.swift rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift \
+  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ThumbnailStore.swift \
+  rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift \
   scripts/validate-project.swift -o /tmp/rupick-validate
 /tmp/rupick-validate /path/to/project /path/to/duplicate.png /path/to/new.png
 ```
@@ -68,3 +69,9 @@ Large duplicate groups use a searchable asset chooser instead of unbounded pop-u
 ![Dark appearance with synthetic fixture data](images/interface-dark.png)
 
 Thumbnail decoding is serialized off the main actor and cached per window with limits of 128 entries and 32 MiB of decoded pixels. Cache keys refresh file modification time and size before lookup. Actual-size decoding obeys the comparison engine's 16-megapixel and 8,192-pixel-side limits. Routine progress snapshots are coalesced to at most ten updates per second, while phase changes, first matches, errors, and final results publish immediately. Each comparison refresh rereads the catalog; inspected results are explicitly provisional until replaced by the completed scan, so no persistent comparison index requires invalidation.
+
+## Project lifecycle
+
+`ProjectLifecycleTests` exercises the project interface with controlled scan completion and recorded file access. It covers fresh same-folder openings, obsolete picker/drop/scan callbacks, submission and file order, duplicate intake, mixed rejection, abandoned batches, cancellation with pending intake, inspection fallback, partial refresh retention, independent windows, and balanced access after retiring work. Native regression coverage verifies retained duplicate inspection, removed representation fallback, and a fresh opening through actual file panels.
+
+Cancel Search retains accepted incoming images and provisional inspection while marking results incomplete. It discards unfinished intake, so late provider callbacks cannot restart the scan. A later picker selection or drop can start comparison again. Project closure invalidates callbacks immediately and lets workers and previews release their own access before removing generated fixture files.

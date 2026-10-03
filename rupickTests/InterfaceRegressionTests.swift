@@ -23,16 +23,16 @@
             let root = try StressDataset.demo.makeProject()
             defer { try? FileManager.default.removeItem(at: root) }
             let session = ProjectSession()
-            await session.start(root: root, incoming: []).value
+            await session.open(root: root, incoming: []).value
             #expect(session.duplicateGroups.count == 1)
             let previous = session.duplicateGroups
             // Starting the new scan must not blank out the currently inspected group.
-            let refresh = session.start(root: root, incoming: [])
+            let refresh = session.refresh(incoming: [])
             #expect(session.duplicateGroups == previous)
             await refresh.value
             #expect(session.duplicateGroups == previous)
             try FileManager.default.removeItem(at: root.appendingPathComponent("Packages"))
-            await session.start(root: root, incoming: []).value
+            await session.refresh(incoming: []).value
             #expect(session.duplicateGroups.isEmpty)
             #expect(session.state == .complete)
         }
@@ -46,10 +46,10 @@
             try FileManager.default.copyItem(at: source, to: first)
             try FileManager.default.copyItem(at: source, to: second)
             let session = ProjectSession()
-            await session.start(root: root, incoming: [first]).value
+            await session.open(root: root, incoming: [first]).value
             let candidates = try #require(session.results.first).candidates
             #expect(candidates.isEmpty == false)
-            let refresh = session.start(root: root, incoming: [first, second])
+            let refresh = session.refresh(incoming: [first, second])
             #expect(session.results.first?.candidates == candidates)
             #expect(session.results.first?.status == .comparing)
             await refresh.value
@@ -87,7 +87,7 @@
             let root = try dataset.makeProject()
             defer { try? FileManager.default.removeItem(at: root) }
             let session = ProjectSession()
-            await session.start(root: root, incoming: []).value
+            await session.open(root: root, incoming: []).value
             #expect(session.state == .complete)
             switch dataset {
             case .empty:

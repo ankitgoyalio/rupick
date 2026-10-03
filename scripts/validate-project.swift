@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 // MARK: - ValidationFailure
 
-/// Compile alongside ProjectSession.swift and CatalogComparison.swift; all inputs remain local.
+/// Compile alongside the project lifecycle and comparison implementation; all inputs remain local.
 private enum ValidationFailure: Error {
     case automaticScanFailed
     case invalidGroups
@@ -56,7 +56,7 @@ struct ValidateProject {
         let inputs = [duplicate, URL(fileURLWithPath: args[3]), reencoded, corrupt]
         let session = ProjectSession()
         let started = ContinuousClock.now
-        let automaticWork = session.start(root: root, incoming: [])
+        let automaticWork = session.open(root: root, incoming: [])
         var automaticHeartbeats = 0
         let automaticHeartbeat = Task { @MainActor in
             while session.isRunning, Task.isCancelled == false {
@@ -81,13 +81,13 @@ struct ValidateProject {
         if let group = groups.first,
            let reference = group.members.first?.representations.first(where: \.matches)?.url
         {
-            await session.start(root: root, incoming: [reference]).value
+            await session.refresh(incoming: [reference]).value
             guard Set(session.results[0].candidates.map(\.id)) == Set(group.members.map(\.id)) else {
                 throw ValidationFailure.inconsistentMembership
             }
         }
         print("Automatic project scan: \(session.discovered) assets; \(groups.count) duplicate groups; \(session.skipped) skipped; \(automaticHeartbeats) main-actor heartbeats. Group membership agrees with incoming comparison.")
-        let work = session.start(root: root, incoming: inputs)
+        let work = session.refresh(incoming: inputs)
         var heartbeats = 0
         let heartbeat = Task { @MainActor in
             while session.isRunning, Task.isCancelled == false {

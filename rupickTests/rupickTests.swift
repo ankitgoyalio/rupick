@@ -18,7 +18,7 @@ struct ProjectSessionTests {
         try fixture.asset("B.xcassets/Third.imageset", images: [image])
         try fixture.asset("B.xcassets/Unique.imageset", images: [blue, blue])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: []).value
+        await session.open(root: fixture.root, incoming: []).value
         #expect(session.state == .complete)
         #expect(session.results.isEmpty)
         #expect(session.duplicateGroups.count == 2)
@@ -43,7 +43,7 @@ struct ProjectSessionTests {
         try fixture.asset("Assets.xcassets/A.imageset", images: [original, original])
         try fixture.asset("Assets.xcassets/B.imageset", images: [other])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: []).value
+        await session.open(root: fixture.root, incoming: []).value
         #expect(session.duplicateGroups.count == (matches ? 1 : 0))
         #expect(session.isIncomplete == false)
     }
@@ -62,7 +62,7 @@ struct ProjectSessionTests {
         try fixture.asset("Excluded.xcassets/Copy.imageset", images: [image])
         try Data("Excluded.xcassets/\n**/Ignored.imageset/variant0.png\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: []).value
+        await session.open(root: fixture.root, incoming: []).value
         #expect(session.duplicateGroups.count == 1)
         #expect(session.duplicateGroups[0].members.map(\.name) == ["A", "B"])
         #expect(session.skipped == 1)
@@ -78,7 +78,7 @@ struct ProjectSessionTests {
             try fixture.asset("Assets.xcassets/A\(index).imageset", images: [image])
         }
         let session = ProjectSession()
-        let work = session.start(root: fixture.root, incoming: [])
+        let work = session.open(root: fixture.root, incoming: [])
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while session.duplicateGroups.isEmpty, session.isRunning, ContinuousClock.now < deadline {
             await Task.yield()
@@ -92,7 +92,7 @@ struct ProjectSessionTests {
         #expect(session.isIncomplete)
         #expect(session.duplicateGroups == retained)
         let missing = fixture.root.appendingPathComponent("missing")
-        await session.start(root: missing, incoming: []).value
+        await session.open(root: missing, incoming: []).value
         #expect(session.state == .failed)
         #expect(session.duplicateGroups.isEmpty)
     }
@@ -105,7 +105,7 @@ struct ProjectSessionTests {
         try fixture.asset("Assets.xcassets/B.imageset", images: [image])
         try FileManager.default.removeItem(at: fixture.root.appendingPathComponent("Assets.xcassets/A.imageset/variant1.png"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: []).value
+        await session.open(root: fixture.root, incoming: []).value
         #expect(session.duplicateGroups.count == 1)
         #expect(session.skipped == 1)
         #expect(session.isIncomplete)
@@ -124,7 +124,7 @@ struct ProjectSessionTests {
         try Data(#"{"images":[{"filename":"variant0.png"},{"filename":"../../../outside.png"},{"filename":"link.png"}]}"#.utf8).write(to: a.appendingPathComponent("Contents.json"))
         try FileManager.default.createSymbolicLink(at: fixture.root.appendingPathComponent("Linked.xcassets"), withDestinationURL: fixture.root.appendingPathComponent("Assets.xcassets"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: []).value
+        await session.open(root: fixture.root, incoming: []).value
         #expect(session.discovered == 2)
         #expect(session.duplicateGroups.count == 1)
         #expect(session.duplicateGroups[0].members.map(\.name) == ["A", "B"])
@@ -144,7 +144,7 @@ struct ProjectSessionTests {
         try fixture.asset("Assets.xcassets/D.imageset", images: [jpeg])
         try fixture.asset("Assets.xcassets/E.imageset", images: [otherJPEG])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: []).value
+        await session.open(root: fixture.root, incoming: []).value
         #expect(session.duplicateGroups.map { $0.members.map(\.name) } == [["A", "B"], ["C", "D"]])
     }
 
@@ -157,7 +157,7 @@ struct ProjectSessionTests {
         let metadata = fixture.root.appendingPathComponent("Assets.xcassets/A.imageset/Contents.json")
         try Data(#"{"images":[{"filename":"variant0.png","scale":"1x"},{"filename":"variant0.png","scale":"1x"}]}"#.utf8).write(to: metadata)
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: []).value
+        await session.open(root: fixture.root, incoming: []).value
         #expect(session.duplicateGroups.count == 1)
         let representations = session.duplicateGroups[0].members[0].representations
         #expect(representations.count == 2)
@@ -174,7 +174,7 @@ struct ProjectSessionTests {
         try Data("invalid".utf8).write(to: broken)
         try fixture.asset("Assets.xcassets/Good.imageset", images: [duplicate])
         let session = ProjectSession()
-        let work = session.start(root: fixture.root, incoming: [duplicate, broken, newImage, duplicate])
+        let work = session.open(root: fixture.root, incoming: [duplicate, broken, newImage, duplicate])
         #expect(session.results.count == 3)
         #expect(session.results.allSatisfy { $0.status == .waiting })
         await work.value
@@ -194,7 +194,7 @@ struct ProjectSessionTests {
         try fixture.asset("Assets.xcassets/Good.imageset", images: [duplicate])
         try fixture.asset("Assets.xcassets/Bad.imageset", images: [broken])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [duplicate, newImage, broken]).value
+        await session.open(root: fixture.root, incoming: [duplicate, newImage, broken]).value
         #expect(session.state == .complete)
         #expect(session.isIncomplete)
         #expect(session.skipped == 1)
@@ -207,7 +207,7 @@ struct ProjectSessionTests {
     @Test func failedScanDoesNotCompleteIncomingComparisons() async {
         let session = ProjectSession()
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        await session.start(root: missing, incoming: [missing.appendingPathComponent("incoming.png")]).value
+        await session.open(root: missing, incoming: [missing.appendingPathComponent("incoming.png")]).value
         #expect(session.state == .failed)
         #expect(session.isIncomplete)
         #expect(session.results[0].status == .incomplete)
@@ -225,7 +225,7 @@ struct ProjectSessionTests {
         try fixture.asset("Dependencies/Assets.xcassets/Broken.imageset", images: [broken])
         try Data("Dependencies/\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.discovered == 1)
         #expect(session.results[0].candidates.map(\.name) == ["Good"])
         #expect(session.skipped == 0)
@@ -243,7 +243,7 @@ struct ProjectSessionTests {
         try Data("*.png\n/RootOnly.xcassets/\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
         try Data("!variant0.png\nOmitted.imageset/\n".utf8).write(to: fixture.root.appendingPathComponent("Nested/.gitignore"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.results[0].error == nil)
         #expect(session.results[0].candidates.map(\.name) == ["Kept", "Visible"])
         #expect(session.results[0].candidates[0].representations.count == 1)
@@ -279,7 +279,7 @@ struct ProjectSessionTests {
         """
         try Data((rules + "\nunused   \n").utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.discovered == 2)
         #expect(session.results[0].candidates.map(\.name) == ["Icon2", "IconA"])
         #expect(session.isIncomplete == false)
@@ -292,7 +292,7 @@ struct ProjectSessionTests {
         try fixture.asset("Assets.xcassets/Icon.imageset", images: [incoming])
         try Data([0xFF]).write(to: fixture.root.appendingPathComponent(".gitignore"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.state == .failed)
         #expect(session.error?.contains("ignore rules") == true)
         #expect(session.results[0].status == .incomplete)
@@ -310,7 +310,7 @@ struct ProjectSessionTests {
         }
         try Data(".DS_Store\n".utf8).write(to: fixture.root.appendingPathComponent(".gitignore"))
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.discovered == 20)
         #expect(session.results[0].candidates.count == 20)
         #expect(session.isIncomplete == false)
@@ -322,7 +322,7 @@ struct ProjectSessionTests {
         let incoming = try fixture.image("incoming.png")
         try fixture.asset("First.xcassets/Icon.imageset", images: [incoming])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.isRunning == false)
         #expect(session.results.first?.candidates.map(\.name) == ["Icon"])
     }
@@ -341,7 +341,7 @@ struct ProjectSessionTests {
         let incoming = try fixture.image("renamed.png", pixels: pixels, width: width, metadata: "New metadata")
         try fixture.asset("Assets.xcassets/Icon.imageset", images: [original])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect((session.results[0].candidates.count == 1) == matches)
     }
 
@@ -352,7 +352,7 @@ struct ProjectSessionTests {
         let incoming = try fixture.image("incoming.png", pixels: [101, 0, 0, 1])
         try fixture.asset("Assets.xcassets/Icon.imageset", images: [original])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.results[0].candidates.isEmpty)
     }
 
@@ -364,7 +364,7 @@ struct ProjectSessionTests {
         try fixture.asset("Nested/First.xcassets/Icon.imageset", images: [incoming, incoming, alternative])
         try fixture.asset("Second.xcassets/Icon.imageset", images: [incoming])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         let candidates = session.results[0].candidates
         #expect(candidates.count == 2)
         #expect(Set(candidates.map(\.id)).count == 2)
@@ -381,7 +381,7 @@ struct ProjectSessionTests {
         let changed = try fixture.image("different.jpg", pixels: [0, 255, 0, 255])
         try fixture.asset("Assets.xcassets/Icon.imageset", images: [original])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [copy, changed]).value
+        await session.open(root: fixture.root, incoming: [copy, changed]).value
         #expect(session.results.map { $0.candidates.count } == [1, 0])
     }
 
@@ -392,7 +392,7 @@ struct ProjectSessionTests {
         let rotated = try fixture.image("rotated.png", pixels: [0, 0, 255, 255, 255, 0, 0, 255], width: 1, orientation: 6)
         try fixture.asset("Assets.xcassets/Icon.imageset", images: [original])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [rotated]).value
+        await session.open(root: fixture.root, incoming: [rotated]).value
         #expect(session.results[0].candidates.count == 1)
     }
 
@@ -405,7 +405,7 @@ struct ProjectSessionTests {
         try fixture.asset("Assets.xcassets/Good.imageset", images: [incoming])
         try fixture.asset("Assets.xcassets/Bad.imageset", images: [broken])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [broken, incoming]).value
+        await session.open(root: fixture.root, incoming: [broken, incoming]).value
         #expect(session.results[0].error != nil)
         #expect(session.results[1].candidates.count == 1)
         #expect(session.skipped == 1)
@@ -425,7 +425,7 @@ struct ProjectSessionTests {
         try FileManager.default.removeItem(at: representation)
         try FileManager.default.createSymbolicLink(at: representation, withDestinationURL: incoming)
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.discovered == 1)
         #expect(session.results[0].candidates.isEmpty)
         #expect(session.skipped == 1)
@@ -438,8 +438,8 @@ struct ProjectSessionTests {
         let incoming = try first.image("incoming.png")
         try first.asset("Assets.xcassets/Icon.imageset", images: [incoming])
         let session = ProjectSession()
-        let old = session.start(root: first.root, incoming: [incoming])
-        let current = session.start(root: second.root, incoming: [incoming])
+        let old = session.open(root: first.root, incoming: [incoming])
+        let current = session.open(root: second.root, incoming: [incoming])
         await current.value; await old.value
         #expect(session.root == second.root)
         #expect(session.results[0].candidates.isEmpty)
@@ -454,7 +454,7 @@ struct ProjectSessionTests {
             try fixture.asset("Assets.xcassets/Icon\(index).imageset", images: [incoming])
         }
         let session = ProjectSession()
-        let task = session.start(root: fixture.root, incoming: [incoming])
+        let task = session.open(root: fixture.root, incoming: [incoming])
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while session.compared == 0, session.isRunning, ContinuousClock.now < deadline {
             await Task.yield()
@@ -475,7 +475,7 @@ struct ProjectSessionTests {
     @Test func missingRootIsAFailureRatherThanNoMatches() async {
         let session = ProjectSession()
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        await session.start(root: missing, incoming: []).value
+        await session.open(root: missing, incoming: []).value
         #expect(session.error != nil)
         #expect(session.phase == "Search failed")
     }
@@ -498,7 +498,7 @@ struct ProjectSessionTests {
         }
         try fixture.asset("Assets.xcassets/LowAlpha.imageset", images: [incoming[0]])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: incoming).value
+        await session.open(root: fixture.root, incoming: incoming).value
         #expect(session.results.map { $0.candidates.count } == [1, 1, 0])
     }
 
@@ -509,7 +509,7 @@ struct ProjectSessionTests {
         try fixture.asset("Orphan.imageset", images: [incoming])
         try fixture.asset("Nested/Assets.xcassets/Valid.imageset", images: [incoming])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [incoming]).value
+        await session.open(root: fixture.root, incoming: [incoming]).value
         #expect(session.discovered == 1)
         #expect(session.results[0].candidates.map(\.name) == ["Valid"])
     }
@@ -521,7 +521,7 @@ struct ProjectSessionTests {
         let wideGamut = try fixture.image("wide.png", colorSpace: #require(CGColorSpace(name: CGColorSpace.displayP3)))
         try fixture.asset("Assets.xcassets/Red.imageset", images: [original])
         let session = ProjectSession()
-        await session.start(root: fixture.root, incoming: [original, wideGamut]).value
+        await session.open(root: fixture.root, incoming: [original, wideGamut]).value
         #expect(session.results.map { $0.candidates.count } == [1, 0])
     }
 }

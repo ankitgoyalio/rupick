@@ -6,19 +6,13 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var session = ProjectSession()
-    @State private var selectedIncoming: URL?
-    @State private var selectedGroup: String?
-    @State private var projectAccess: URL?
-    @State private var incomingAccess = [URL]()
-    @State private var dropNotice: String?
     @State private var dropTargeted = false
-    @State private var thumbnails = ThumbnailStore()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     #if DEBUG
         @State private var stressDataset = StressDataset.demo
-        @State private var stressRoot: URL?
         @State private var preparingStress = false
+        @State private var fixtureError: String?
     #endif
 
     var body: some View {
@@ -33,7 +27,7 @@ struct ContentView: View {
                             .truncationMode(.middle)
                             .help(session.root?.path ?? "Choose a project folder")
                             .accessibilityIdentifier("projectHeading")
-                        List(selection: sidebarSelection) {
+                        List(selection: Binding(get: { session.selection }, set: { session.select($0) })) {
                             Section("Project Duplicates") {
                                 ForEach(session.duplicateGroups) { group in
                                     VStack(alignment: .leading) {
@@ -69,10 +63,14 @@ struct ContentView: View {
                     }
                     .navigationSplitViewColumnWidth(min: 220, ideal: 260)
                 } detail: {
-                    if let result = session.results.first(where: { $0.url == selectedIncoming }) {
+                    if case let .incoming(url) = session.selection,
+                       let result = session.results.first(where: { $0.url == url })
+                    {
                         ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
                     } else if let root = session.root {
-                        if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
+                        if case let .group(id) = session.selection,
+                           let group = session.duplicateGroups.first(where: { $0.id == id })
+                        {
                             DuplicateInspection(group: group, root: root).id(group.id)
                         } else {
                             ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
@@ -83,6 +81,7 @@ struct ContentView: View {
                                                description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
                     }
                 }
+                .id(session.id)
                 .toolbar {
                     #if DEBUG
                         if ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" {
@@ -104,7 +103,7 @@ struct ContentView: View {
                         .help(session.root == nil
                             ? Text("Open a project folder first.")
                             : Text("Choose PNG or JPEG images to find exact matches."))
-                    if session.isRunning {
+                    if session.canCancel {
                         Button("Cancel Search") { session.cancel() }
                             .help("Stop the search and keep the matches found so far.")
                     }
@@ -113,9 +112,14 @@ struct ContentView: View {
                 .clipped()
 
                 VStack(alignment: .leading) {
-                    if let dropNotice {
-                        Text(dropNotice).foregroundStyle(.orange)
+                    if let notice = session.notice {
+                        Text(notice).foregroundStyle(.orange)
                     }
+                    #if DEBUG
+                        if let fixtureError {
+                            Text(fixtureError).foregroundStyle(.orange)
+                        }
+                    #endif
                     SessionProgress(session: session)
                 }
                 .padding()
@@ -136,12 +140,7 @@ struct ContentView: View {
                 .animation(dropTargeted ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: reduceMotion ? 0.1 : 0.125), value: dropTargeted)
         }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted, perform: acceptDrop)
-        .environment(thumbnails)
-        .onChange(of: session.duplicateGroups.map(\.id)) { _, ids in
-            if let selectedGroup, ids.contains(selectedGroup) == false {
-                self.selectedGroup = ids.first
-            }
-        }
+        .environment(session.thumbnails)
         .frame(minWidth: 950, minHeight: 620)
         #if DEBUG
             .task(id: stressDataset) {
@@ -149,6 +148,7 @@ struct ContentView: View {
                     return
                 }
 
+                fixtureError = nil
                 preparingStress = true
                 defer { preparingStress = false }
                 let dataset = stressDataset
@@ -159,60 +159,15 @@ struct ContentView: View {
                         try? FileManager.default.removeItem(at: root); return
                     }
 
-                    session.cancel()
-                    releaseAccess()
-                    if let stressRoot {
-                        try? FileManager.default.removeItem(at: stressRoot)
-                    }
-                    stressRoot = root
-                    thumbnails = ThumbnailStore()
-                    selectedIncoming = nil; selectedGroup = nil; dropNotice = nil
-                    session.start(root: root, incoming: [])
+                    session.openFixture(root: root)
                 } catch {
                     if Task.isCancelled == false {
-                        dropNotice = "Could not prepare fixture data."
+                        fixtureError = "Could not prepare fixture data."
                     }
                 }
             }
         #endif
-            .onDisappear {
-                session.cancel()
-                releaseAccess()
-                thumbnails = ThumbnailStore()
-                #if DEBUG
-                    if let stressRoot {
-                        try? FileManager.default.removeItem(at: stressRoot)
-                    }
-                #endif
-            }
-    }
-
-    private enum SidebarSelection: Hashable {
-        case group(String)
-        case incoming(URL)
-    }
-
-    private var sidebarSelection: Binding<SidebarSelection?> {
-        Binding(get: {
-            if let selectedIncoming {
-                return .incoming(selectedIncoming)
-            }
-            if let id = selectedGroup ?? session.duplicateGroups.first?.id {
-                return .group(id)
-            }
-            return nil
-        }, set: { selection in
-            switch selection {
-            case let .group(id):
-                selectedGroup = id; selectedIncoming = nil
-
-            case let .incoming(url):
-                selectedIncoming = url
-
-            case nil:
-                break
-            }
-        })
+            .onDisappear { session.close() }
     }
 
     private var duplicateStatus: String {
@@ -229,6 +184,7 @@ struct ContentView: View {
     }
 
     private func pickProject() {
+        let sessionID = session.id
         let panel = NSOpenPanel()
         panel.title = "Choose a project folder"
         panel.canChooseDirectories = true
@@ -239,98 +195,40 @@ struct ContentView: View {
                 return
             }
 
-            session.cancel()
-            releaseAccess()
-            thumbnails = ThumbnailStore()
-            if url.startAccessingSecurityScopedResource() {
-                projectAccess = url
-            }
-            selectedIncoming = nil
-            selectedGroup = nil
-            dropNotice = nil
-            session.start(root: url, incoming: [])
+            session.open(root: url, replacing: sessionID)
         }
     }
 
     private func pickImages() {
+        guard let batch = session.beginIncoming(count: 1) else {
+            return
+        }
+
         let panel = NSOpenPanel()
         panel.title = "Choose incoming images"
         panel.allowedContentTypes = [.png, .jpeg]
         panel.allowsMultipleSelection = true
         panel.begin { response in
-            guard response == .OK else {
-                return
+            if response == .OK {
+                session.receiveIncoming(panel.urls, batch: batch)
+            } else {
+                session.abandonIncoming(batch: batch)
             }
-
-            dropNotice = nil
-            addImages(panel.urls)
-        }
-    }
-
-    private func addImages(_ urls: [URL]) {
-        guard let root = session.root else {
-            return
-        }
-
-        let images = urls.filter { url in
-            guard url.isFileURL, let type = UTType(filenameExtension: url.pathExtension) else {
-                return false
-            }
-
-            return type.conforms(to: .png) || type.conforms(to: .jpeg)
-        }
-        if images.count != urls.count {
-            dropNotice = "Some files were not added. Choose PNG or JPEG files."
-        }
-        let existing = session.results.map(\.url)
-        var seen = Set(existing)
-        let added = images.filter { seen.insert($0).inserted }
-        guard added.isEmpty == false else {
-            return
-        }
-
-        for url in added where url.startAccessingSecurityScopedResource() {
-            incomingAccess.append(url)
-        }
-        thumbnails = ThumbnailStore()
-        session.start(root: root, incoming: existing + added)
-        if selectedIncoming == nil {
-            selectedIncoming = added.first
         }
     }
 
     private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard session.root != nil else {
-            dropNotice = "Open a project folder before dropping images."
+        guard let batch = session.beginIncoming(count: providers.count) else {
             return false
         }
 
-        dropNotice = nil
-        let root = session.root
-        let batch = IncomingDropBatch(count: providers.count) { urls in
-            guard session.root == root else {
-                return
-            }
-
-            if urls.count != providers.count {
-                dropNotice = "Some dropped files could not be opened. Use Choose Images to try again."
-            }
-            addImages(urls)
-        }
         for (index, provider) in providers.enumerated() {
             provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
                 let url = data.flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
-                Task { @MainActor in batch.receive(url, at: index) }
+                Task { @MainActor in session.receiveIncoming(url, batch: batch, index: index) }
             }
         }
-        return providers.isEmpty == false
-    }
-
-    private func releaseAccess() {
-        projectAccess?.stopAccessingSecurityScopedResource()
-        projectAccess = nil
-        incomingAccess.forEach { $0.stopAccessingSecurityScopedResource() }
-        incomingAccess = []
+        return true
     }
 }
 
@@ -518,7 +416,9 @@ private struct DuplicateMemberPanel: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             DuplicateMemberPreview(member: member, root: root, previewOptions: previewOptions).id(member.id)
-        }.frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity)
+        .onChange(of: member.id, initial: true) { _, id in selectedID = id }
     }
 }
 
@@ -549,6 +449,7 @@ private struct DuplicateMemberPreview: View {
                              sharedOptions: previewOptions)
             }
         }
+        .onChange(of: representation?.id, initial: true) { _, id in selectedID = id ?? "" }
     }
 }
 
@@ -615,6 +516,7 @@ private struct CandidateInspection: View {
         }
         .padding()
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .onChange(of: representation?.id, initial: true) { _, id in selectedRepresentation = id }
     }
 }
 
@@ -737,7 +639,10 @@ private struct ImagePreview: View {
         }
         .frame(maxWidth: .infinity)
         .task(id: PreviewRequest(url: url, actualSize: actualSize, storeID: thumbnails.id)) {
-            loaded = nil; failedURL = nil
+            if loaded?.url != url {
+                loaded = nil
+            }
+            failedURL = nil
             let value = await thumbnails.load(url: url, scope: accessURL ?? url, fullSize: actualSize)
             guard Task.isCancelled == false else {
                 return
@@ -747,30 +652,6 @@ private struct ImagePreview: View {
             if value == nil {
                 failedURL = url
             }
-        }
-    }
-}
-
-// MARK: - IncomingDropBatch
-
-/// Keep provider completion order from changing the incoming list's order.
-@MainActor
-private final class IncomingDropBatch {
-    private var urls: [URL?]
-    private var remaining: Int
-    private let completion: ([URL]) -> Void
-
-    init(count: Int, completion: @escaping ([URL]) -> Void) {
-        urls = Array(repeating: nil, count: count)
-        remaining = count
-        self.completion = completion
-    }
-
-    func receive(_ url: URL?, at index: Int) {
-        urls[index] = url
-        remaining -= 1
-        if remaining == 0 {
-            completion(urls.compactMap { $0 })
         }
     }
 }
