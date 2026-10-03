@@ -100,7 +100,7 @@ Stress validation also exposed a resize feedback loop when an inspection's lazil
 
 ## Welcome screen
 
-With no project selected, the window shows a centered app mark, app name and version, a native Open Project button, and a rounded guidance card. The sidebar, comparison counters, and incoming-image controls appear after choosing a project. Native acceptance checks Light and Dark appearances, opening and cancelling the folder picker by click and Command-O, and transition into the existing project inspection flow. The welcome, native picker/representation, and scroll-layout tests passed after this change.
+With no project selected, the window uses a compact 480 × 600-point content area (480 × 632 including the title bar on the validation system) and shows a centered app mark, app name and version, a native Open Project button, and a rounded guidance card. Opening a project expands the window to the 950 × 620-point minimum workspace, which remains resizable. The sidebar, comparison counters, and incoming-image controls appear after choosing a project. Native acceptance checks compact sizing in Light and Dark appearances, opening and cancelling the folder picker by click and Command-O, automatic workspace expansion, and transition into the existing project inspection flow. The welcome, native picker/representation, and scroll-layout tests passed after this change.
 
 ![Welcome screen in Light appearance](images/welcome-light.png)
 

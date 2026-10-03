@@ -149,7 +149,10 @@ struct ContentView: View {
         }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted, perform: acceptDrop)
         .environment(session.thumbnails)
-        .frame(minWidth: 950, minHeight: 620)
+        .frame(minWidth: session.root == nil ? 480 : 950,
+               maxWidth: session.root == nil ? 480 : .infinity,
+               minHeight: session.root == nil ? 600 : 620,
+               maxHeight: session.root == nil ? 600 : .infinity)
         #if DEBUG
             .preferredColorScheme(ProcessInfo.processInfo.environment["RUPICK_STRESS_APPEARANCE"] == "light" ? .light : nil)
             .task(id: stressDataset) {

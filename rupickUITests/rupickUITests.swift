@@ -20,6 +20,10 @@ final class rupickUITests: XCTestCase {
             let button = app.buttons["openProject"]
             XCTAssertTrue(button.waitForExistence(timeout: 10))
             XCTAssertTrue(button.isHittable)
+            let welcomeFrame = app.windows.firstMatch.frame
+            XCTAssertEqual(welcomeFrame.width, 480, accuracy: 2)
+            XCTAssertGreaterThanOrEqual(welcomeFrame.height, 600)
+            XCTAssertLessThan(welcomeFrame.height, 650)
             XCTAssertTrue(app.staticTexts["Find matching images"].exists)
             XCTAssertFalse(app.staticTexts["projectHeading"].exists)
             XCTAssertFalse(app.descendants(matching: .any)["searchFooter"].exists)
@@ -36,6 +40,17 @@ final class rupickUITests: XCTestCase {
             app.typeKey("o", modifierFlags: .command)
             XCTAssertTrue(cancel.waitForExistence(timeout: 5))
             cancel.click()
+            XCTAssertEqual(app.windows.firstMatch.frame.width, welcomeFrame.width, accuracy: 2)
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-welcome-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            do { try copyFixture(to: root) } catch { XCTFail("Could not prepare project: \(error)"); return }
+            button.click()
+            choose(root.path, in: app)
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+            let workspaceFrame = app.windows.firstMatch.frame
+            XCTAssertGreaterThanOrEqual(workspaceFrame.width, 950)
+            XCTAssertGreaterThanOrEqual(workspaceFrame.height, 620)
+            XCTAssertTrue(app.buttons["chooseImages"].isHittable)
             app.terminate()
         }
     }

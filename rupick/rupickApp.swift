@@ -6,5 +6,7 @@ struct rupickApp: App {
         WindowGroup {
             ContentView()
         }
+        .defaultSize(width: 480, height: 600)
+        .windowResizability(.contentSize)
     }
 }
