@@ -75,6 +75,18 @@ Use the incoming-image review card to record **Keep as New**, including when can
 
 Native acceptance exercises both outcomes, keeping as new with candidates, alternative rejection, representation selection retention, and navigation back to a recorded decision. The optional local-project native test exercises the same review flow. ProjectSession coverage verifies catalog identity, matching representation, independent per-image decisions, rescan retention, project reset, invalid identities, and byte-for-byte unchanged fixture contents. The local validation executable also verifies both outcomes, rescan retention, preserved candidates, and unchanged catalog-file hashes.
 
-The debug fixture selector now includes incoming images through the normal comparison boundary. Worst case supplies long filenames and Unicode/RTL/emoji names; One and 1,000 assets exercise single-candidate and thousand-candidate review state. Empty supplies no incoming rows. Native stress acceptance reviews the worst-case incoming images and returns to duplicate inspection; session stress coverage records outcomes and rescans every dataset.
+The debug fixture selector now includes incoming images through the normal comparison boundary. Set `RUPICK_STRESS_APPEARANCE=light` for a deterministic Light appearance during fixture validation. Worst case supplies long filenames and Unicode/RTL/emoji names; One and 1,000 assets exercise single-candidate and thousand-candidate review state. Empty supplies no incoming rows. Native stress acceptance reviews the worst-case incoming images and returns to duplicate inspection; session stress coverage records outcomes and rescans every dataset.
 
 Motion uses native file panels, pickers, sheets, popovers, scrolling, progress controls, and button feedback. The asynchronous completion mark has a 160 ms strong ease-out opacity/scale transition (0.95 to 1); Reduce Motion uses only a 100 ms fade. The Finder drop outline exits with a 125 ms fade (100 ms with Reduce Motion) and appears immediately. High-frequency navigation, representation selection, and review actions remain immediate. Motion review checks the full interface against the review-animations standards.
+
+Animation review verdict: **Approve**. No feel-breaking, layout-animation, timing, interruption, or reduced-motion findings. Reviewed `ContentView.swift` drop feedback, asynchronous completion feedback, native panels/popovers/sheets, and frequent inspection/review controls. Values match the review-animations standards (125–160 ms, strong ease-out, opacity/scale only, immediate high-frequency actions).
+
+| Before | After | Why |
+| --- | --- | --- |
+| No motion defects identified in the final review | Native behavior and scoped completion/drop feedback approved | Short, interruptible feedback; no animated layout or delayed review/navigation; Reduce Motion retains gentle opacity feedback |
+
+Stress validation also exposed a resize feedback loop when an inspection's lazily mounted header was offscreen. Inspection headers and controls now use regular stacks, while collection rows remain lazy. Native regression coverage resizes after scrolling to the final row and verifies toolbar/footer bounds. The geometry test starts at a known size within the display; the optional project test explicitly selects the new incoming row before asserting its status.
+
+![Light appearance at minimum window size with synthetic worst-case data](images/review-light.png)
+
+![Dark appearance at minimum window size with synthetic worst-case data](images/review-dark.png)

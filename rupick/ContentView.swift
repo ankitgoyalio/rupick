@@ -149,6 +149,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 950, minHeight: 620)
         #if DEBUG
+            .preferredColorScheme(ProcessInfo.processInfo.environment["RUPICK_STRESS_APPEARANCE"] == "light" ? .light : nil)
             .task(id: stressDataset) {
                 guard ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" else {
                     return
@@ -417,7 +418,7 @@ private struct DuplicateInspection: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 16) {
                 DuplicateHeader(memberCount: group.members.count)
                 PreviewControls(options: $previewOptions)
                 HStack(alignment: .top) {
@@ -425,7 +426,9 @@ private struct DuplicateInspection: View {
                     DuplicateMemberPanel(members: group.members, root: root, selectedID: $rightID, fallback: group.members[1], previewOptions: previewOptions)
                 }
                 Text("Participating assets").font(.headline)
-                ForEach(group.members) { member in DuplicateParticipant(member: member) }
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(group.members) { member in DuplicateParticipant(member: member) }
+                }
             }.padding()
         }
         .accessibilityIdentifier("duplicateScrollView")
@@ -576,7 +579,7 @@ private struct ComparisonDetail: View {
     let session: ProjectSession
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 20) {
                 Text(result.url.lastPathComponent).font(.title).accessibilityIdentifier("comparisonHeading")
                 if let error = result.error {
                     Text(error).foregroundStyle(.red)
@@ -585,7 +588,7 @@ private struct ComparisonDetail: View {
                 } else {
                     Text(result.statusLabel).accessibilityIdentifier("comparisonStatus")
                 }
-                ReviewSummary(review: session.review(for: result.url), isRunning: session.isRunning) {
+                ReviewSummary(outcome: session.review(for: result.url).outcome, isRunning: session.isRunning) {
                     session.keepAsNew(result.url)
                 }
                 HStack(alignment: .top, spacing: 16) {
@@ -607,7 +610,7 @@ private struct ComparisonDetail: View {
 // MARK: - ReviewSummary
 
 private struct ReviewSummary: View {
-    let review: IncomingReview
+    let outcome: ReviewOutcome?
     let isRunning: Bool
     let keepAsNew: () -> Void
 
@@ -624,7 +627,7 @@ private struct ReviewSummary: View {
                     keepButton
                 }
             }
-            if case let .reuse(asset) = review.outcome {
+            if case let .reuse(asset) = outcome {
                 Text(asset.location).font(.caption).textSelection(.enabled)
                 Text("\(asset.representation.url.lastPathComponent) · \(asset.representation.label)")
                     .font(.caption)
@@ -643,7 +646,7 @@ private struct ReviewSummary: View {
     }
 
     private var outcomeLabel: some View {
-        Label(review.outcome?.label ?? "Unreviewed", systemImage: review.outcome == nil ? "circle" : "checkmark.circle.fill")
+        Label(outcome?.label ?? "Unreviewed", systemImage: outcome == nil ? "circle" : "checkmark.circle.fill")
             .font(.headline)
             .accessibilityIdentifier("reviewOutcome")
     }

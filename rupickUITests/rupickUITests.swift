@@ -68,6 +68,38 @@ final class rupickUITests: XCTestCase {
 
     #endif
 
+    #if DEBUG
+        @MainActor
+        func testReviewLayoutAtMinimumWindowSize() {
+            let app = XCUIApplication()
+            app.launchEnvironment["RUPICK_STRESS_UI"] = "1"
+            app.launchEnvironment["RUPICK_STRESS_APPEARANCE"] = "light"
+            app.launch()
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+            let window = app.windows.firstMatch
+            let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -2, dy: -2))
+            let target = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 950, dy: 620))
+            corner.press(forDuration: 0.2, thenDragTo: target)
+            XCTAssertLessThanOrEqual(window.frame.width, 960)
+            XCTAssertLessThanOrEqual(window.frame.height, 680)
+            app.popUpButtons["stressDatasetPicker"].click()
+            app.menuItems["Worst case"].click()
+            let row = app.descendants(matching: .any).matching(identifier: "incoming-PaymentConfirmationIllustration-Dark-HighContrast-Final.png").firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 30))
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+            row.click()
+            app.buttons["keepAsNew"].click()
+            let outcome = app.staticTexts["reviewOutcome"]
+            XCTAssertTrue((outcome.value as? String ?? outcome.label).contains("Keep as new"))
+            XCTAssertTrue(app.buttons["keepAsNew"].isHittable)
+            XCTAssertGreaterThanOrEqual(app.buttons["keepAsNew"].frame.minX, window.frame.minX)
+            XCTAssertLessThanOrEqual(app.buttons["keepAsNew"].frame.maxX, window.frame.maxX)
+            let screenshot = XCTAttachment(screenshot: window.screenshot())
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+    #endif
+
     @MainActor
     func testScrollContentStaysBetweenToolbarAndSearchFooter() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-scroll-\(UUID().uuidString)")
@@ -110,6 +142,12 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(toolbar.exists, file: file, line: line)
         XCTAssertTrue(footer.exists, file: file, line: line)
         XCTAssertTrue(scroll.exists, file: file, line: line)
+        // Begin at a known size so growth stays within the available display.
+        let initialCorner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+            .withOffset(CGVector(dx: -2, dy: -2))
+        let initialTarget = window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 950, dy: 680))
+        initialCorner.press(forDuration: 0.2, thenDragTo: initialTarget)
         for sizeChange in [CGVector.zero, CGVector(dx: 220, dy: 120), CGVector(dx: -220, dy: -120)] {
             if sizeChange != .zero {
                 let previousSize = window.frame.size
@@ -287,8 +325,25 @@ final class rupickUITests: XCTestCase {
     }
 
     @MainActor
+    private func selectIncoming(_ name: String, in app: XCUIApplication) {
+        let row = app.descendants(matching: .any).matching(identifier: "incoming-" + name).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        let sidebar = app.outlines["Sidebar"]
+        for _ in 0 ..< 5 {
+            if row.frame.minY >= sidebar.frame.minY, row.frame.maxY <= sidebar.frame.maxY {
+                break
+            }
+            sidebar.scroll(byDeltaX: 0, deltaY: row.frame.maxY > sidebar.frame.maxY ? -300 : 300)
+        }
+        XCTAssertGreaterThanOrEqual(row.frame.minY, sidebar.frame.minY)
+        XCTAssertLessThanOrEqual(row.frame.maxY, sidebar.frame.maxY)
+        row.click()
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: 10000)
+    }
+
+    @MainActor
     private func exerciseReview(in app: XCUIApplication, duplicateName: String, otherName: String) {
-        app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+        selectIncoming(duplicateName, in: app)
         let pickers = app.popUpButtons.matching(identifier: "representationPicker")
         XCTAssertTrue(pickers.firstMatch.waitForExistence(timeout: 10))
         let picker = pickers.firstMatch
@@ -298,25 +353,29 @@ final class rupickUITests: XCTestCase {
             alternative.click()
             XCTAssertFalse(app.buttons.matching(identifier: "reuseAsset").firstMatch.isEnabled)
             let selected = picker.value as? String
-            app.descendants(matching: .any).matching(identifier: "incoming-" + otherName).firstMatch.click()
-            app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+            selectIncoming(otherName, in: app)
+            selectIncoming(duplicateName, in: app)
             XCTAssertEqual(pickers.firstMatch.value as? String, selected)
             pickers.firstMatch.click()
         }
         app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Exact match")).firstMatch.click()
         let selected = pickers.firstMatch.value as? String
-        app.buttons.matching(identifier: "reuseAsset").firstMatch.click()
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: -400)
+        let reuse = app.buttons.matching(identifier: "reuseAsset").firstMatch
+        XCTAssertTrue(reuse.isHittable)
+        reuse.click()
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: 10000)
         XCTAssertTrue(app.staticTexts["reviewOutcome"].label.contains("Reuse") || (app.staticTexts["reviewOutcome"].value as? String)?.contains("Reuse") == true)
-        app.descendants(matching: .any).matching(identifier: "incoming-" + otherName).firstMatch.click()
+        selectIncoming(otherName, in: app)
         app.buttons["keepAsNew"].click()
-        app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+        selectIncoming(duplicateName, in: app)
         XCTAssertEqual(pickers.firstMatch.value as? String, selected)
         XCTAssertTrue(app.staticTexts["reviewOutcome"].label.contains("Reuse") || (app.staticTexts["reviewOutcome"].value as? String)?.contains("Reuse") == true)
         app.buttons["keepAsNew"].click()
         XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.exists)
         XCTAssertTrue(pickers.firstMatch.exists)
-        app.descendants(matching: .any).matching(identifier: "incoming-" + otherName).firstMatch.click()
-        app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+        selectIncoming(otherName, in: app)
+        selectIncoming(duplicateName, in: app)
         XCTAssertTrue(app.staticTexts["reviewOutcome"].label.contains("Keep as new") || (app.staticTexts["reviewOutcome"].value as? String)?.contains("Keep as new") == true)
         let progress = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "2 of ")).firstMatch
         XCTAssertTrue((progress.value as? String ?? progress.label).hasPrefix("2 of "))
@@ -440,10 +499,10 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Could not read this PNG")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["No matches found"].exists)
         XCTAssertFalse(app.staticTexts["comparisonStatus"].exists)
-        app.staticTexts["renamed.png"].firstMatch.click()
+        selectIncoming("renamed.png", in: app)
         XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.exists)
-        app.staticTexts["new.png"].firstMatch.click()
+        selectIncoming("new.png", in: app)
         XCTAssertTrue(app.staticTexts["Incomplete search · 0 matches so far"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["No matches found"].exists)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Incomplete scan:")).firstMatch.exists)
@@ -513,6 +572,7 @@ final class rupickUITests: XCTestCase {
             choose(config.newImage, in: app)
             XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
         }
+        app.descendants(matching: .any).matching(identifier: "incoming-" + URL(fileURLWithPath: config.newImage).lastPathComponent).firstMatch.click()
         XCTAssertTrue(app.staticTexts["comparisonStatus"].waitForExistence(timeout: 10))
         let status = (app.staticTexts["comparisonStatus"].value as? String) ?? app.staticTexts["comparisonStatus"].label
         XCTAssertTrue(status == "No matches found" || status == "Incomplete search · 0 matches so far")
