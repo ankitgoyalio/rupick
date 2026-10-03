@@ -102,6 +102,44 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
     }
 }
 
+// MARK: - ReusedAsset
+
+struct ReusedAsset: Sendable, Equatable {
+    let candidateID: String
+    let name: String
+    let location: String
+    let representation: Representation
+}
+
+// MARK: - ReviewOutcome
+
+enum ReviewOutcome: Sendable, Equatable {
+    case keepAsNew
+    case reuse(ReusedAsset)
+
+    static func reuse(candidate: AssetCandidate, representation: Representation) -> Self {
+        .reuse(ReusedAsset(candidateID: candidate.id, name: candidate.name,
+                           location: candidate.location, representation: representation))
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .keepAsNew:
+            "Reviewed · Keep as new"
+
+        case let .reuse(asset):
+            "Reviewed · Reuse \(asset.name)"
+        }
+    }
+}
+
+// MARK: - IncomingReview
+
+struct IncomingReview: Sendable, Equatable {
+    var outcome: ReviewOutcome?
+    var representationIDs = [String: String]()
+}
+
 // MARK: - ScanSnapshot
 
 struct ScanSnapshot: Sendable {
@@ -144,6 +182,7 @@ final class ProjectSession {
 
     private(set) var root: URL?
     private(set) var results = [IncomingResult]()
+    private(set) var reviews = [URL: IncomingReview]()
     private(set) var duplicateGroups = [DuplicateGroup]()
     private(set) var state = SearchState.idle
     private(set) var thumbnails: ThumbnailStore
@@ -192,6 +231,47 @@ final class ProjectSession {
         workers.values.forEach { $0.cancel() }
     }
 
+    var reviewedCount: Int {
+        results.count { reviews[$0.url]?.outcome != nil }
+    }
+
+    func review(for incoming: URL) -> IncomingReview {
+        reviews[incoming] ?? IncomingReview()
+    }
+
+    func selectRepresentation(for incoming: URL, candidateID: String, representationID: String) {
+        guard results.first(where: { $0.url == incoming })?.candidates.contains(where: {
+            $0.id == candidateID && $0.representations.contains(where: { $0.id == representationID })
+        }) == true else {
+            return
+        }
+
+        reviews[incoming, default: IncomingReview()].representationIDs[candidateID] = representationID
+    }
+
+    @discardableResult
+    func reuseAsset(for incoming: URL, candidateID: String, representationID: String) -> Bool {
+        guard isRunning == false,
+              let result = results.first(where: { $0.url == incoming }), result.error == nil,
+              let candidate = result.candidates.first(where: { $0.id == candidateID }),
+              let representation = candidate.representations.first(where: { $0.id == representationID && $0.matches })
+        else {
+            return false
+        }
+
+        reviews[incoming, default: IncomingReview()].outcome = .reuse(candidate: candidate, representation: representation)
+        selectRepresentation(for: incoming, candidateID: candidateID, representationID: representationID)
+        return true
+    }
+
+    func keepAsNew(_ incoming: URL) {
+        guard isRunning == false, results.contains(where: { $0.url == incoming }) else {
+            return
+        }
+
+        reviews[incoming, default: IncomingReview()].outcome = .keepAsNew
+    }
+
     @discardableResult
     func open(root: URL, incoming: [URL] = [], replacing sessionID: UUID? = nil) -> Task<Void, Never> {
         guard sessionID == nil || sessionID == id else {
@@ -206,8 +286,8 @@ final class ProjectSession {
 
     #if DEBUG
         @discardableResult
-        func openFixture(root: URL) -> Task<Void, Never> {
-            let work = open(root: root)
+        func openFixture(root: URL, incoming: [URL] = []) -> Task<Void, Never> {
+            let work = open(root: root, incoming: incoming)
             temporaryRoot = root
             return work
         }
@@ -416,7 +496,7 @@ final class ProjectSession {
         thumbnails = ThumbnailStore(access: dependencies.access)
         let temporary = temporaryRoot
         temporaryRoot = nil
-        root = nil; results = []; duplicateGroups = []; selection = nil; notice = nil
+        root = nil; results = []; reviews = [:]; duplicateGroups = []; selection = nil; notice = nil
         state = .idle
         discovered = 0; compared = 0; decoded = 0; skipped = 0; error = nil
         phase = "Choose a project folder to begin."
@@ -503,6 +583,21 @@ final class ProjectSession {
 
         if let snapshot = latestSnapshot {
             results = snapshot.results; duplicateGroups = snapshot.duplicateGroups
+        }
+        for result in results {
+            guard var review = reviews[result.url] else {
+                continue
+            }
+
+            review.representationIDs = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { candidate in
+                guard let selected = review.representationIDs[candidate.id] else {
+                    return nil
+                }
+
+                let representation = candidate.representations.first { $0.id == selected } ?? candidate.representations.first(where: \.matches)
+                return representation.map { (candidate.id, $0.id) }
+            })
+            reviews[result.url] = review
         }
         latestSnapshot = nil
         state = error == nil ? .complete : .failed

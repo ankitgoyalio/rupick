@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -10,6 +11,8 @@ private enum ValidationFailure: Error {
     case invalidGroups
     case inconsistentMembership
     case incomingComparisonFailed
+    case reviewFailed
+    case projectChanged
 }
 
 // MARK: - ValidateProject
@@ -32,6 +35,7 @@ struct ValidateProject {
         }
 
         let root = URL(fileURLWithPath: args[1])
+        let before = try catalogContents(root)
         let duplicate = URL(fileURLWithPath: args[2])
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
@@ -109,6 +113,64 @@ struct ValidateProject {
             throw ValidationFailure.incomingComparisonFailed
         }
 
+        let candidate = session.results[0].candidates[0]
+        guard let representation = candidate.representations.first(where: \.matches),
+              session.reuseAsset(for: inputs[0], candidateID: candidate.id, representationID: representation.id),
+              session.review(for: inputs[0]).outcome == .reuse(candidate: candidate, representation: representation)
+        else {
+            throw ValidationFailure.reviewFailed
+        }
+
+        session.keepAsNew(inputs[1])
+        session.keepAsNew(inputs[2])
+        guard session.reviewedCount == 3,
+              session.results[2].candidates.isEmpty == false,
+              session.review(for: inputs[2]).outcome == .keepAsNew
+        else {
+            throw ValidationFailure.reviewFailed
+        }
+
+        await session.refresh(incoming: inputs).value
+        guard session.reviewedCount == 3,
+              session.review(for: inputs[0]).outcome == .reuse(candidate: candidate, representation: representation),
+              session.review(for: inputs[0]).representationIDs[candidate.id] == representation.id,
+              session.review(for: inputs[1]).outcome == .keepAsNew
+        else {
+            throw ValidationFailure.reviewFailed
+        }
+
+        let after = try catalogContents(root)
+        guard before == after else {
+            throw ValidationFailure.projectChanged
+        }
+
+        print("Review acceptance passed: both outcomes retained after rescan, matching identity and representation retained, candidates preserved, catalog contents unchanged.")
+
         print("Acceptance passed: \(session.discovered) assets; \(session.skipped) skipped; \(session.results[0].candidates.count) grouped duplicate matches; metadata/re-encoding and corrupt-input checks passed; new image has zero matches; \(heartbeats) main-actor heartbeats; elapsed \(started.duration(to: .now)).")
+    }
+
+    private static func catalogContents(_ root: URL) throws -> [String: String] {
+        let boundary = root.standardizedFileURL
+        let rules = ProjectIgnoreRules(root: boundary)
+        guard let files = FileManager.default.enumerator(at: boundary, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+
+        var contents = [String: String]()
+        for case let url as URL in files {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+            if try values.isSymbolicLink == true || url.lastPathComponent == ".git" ||
+                (rules.ignores(url, isDirectory: values.isDirectory == true))
+            {
+                files.skipDescendants()
+                continue
+            }
+            guard url.pathComponents.contains(where: { $0.hasSuffix(".xcassets") }), values.isRegularFile == true else {
+                continue
+            }
+
+            contents[url.path] = try SHA256.hash(data: Data(contentsOf: url)).description
+        }
+        return contents
     }
 }

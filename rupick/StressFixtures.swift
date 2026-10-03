@@ -33,6 +33,26 @@
             }
         }
 
+        func makeIncomingImages(in root: URL) throws -> [URL] {
+            guard self != .empty,
+                  let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil),
+                  let source = files.compactMap({ $0 as? URL }).first(where: { $0.lastPathComponent == "illustration-dark-contrast@3x.png" })
+            else {
+                return []
+            }
+
+            let folder = root.appendingPathComponent("Incoming")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let names = self == .worst
+                ? ["PaymentConfirmationIllustration-Dark-HighContrast-Final.png", "王秀英-نور-الهدى-👩🏽‍💻.png", "J.png"]
+                : ["incoming.png", "another.png"]
+            return try names.map { name in
+                let url = folder.appendingPathComponent(name)
+                try FileManager.default.copyItem(at: source, to: url)
+                return url
+            }
+        }
+
         func makeProject() throws -> URL {
             let root = FileManager.default
                 .temporaryDirectory

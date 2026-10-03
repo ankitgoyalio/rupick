@@ -18,113 +18,121 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                NavigationSplitView {
-                    VStack(alignment: .leading) {
-                        Text(session.root?.lastPathComponent ?? "No project selected")
-                            .font(.headline)
-                            .padding(.horizontal)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(session.root?.path ?? "Choose a project folder")
-                            .accessibilityIdentifier("projectHeading")
-                        List(selection: Binding(get: { session.selection }, set: { session.select($0) })) {
-                            Section("Project Duplicates") {
-                                ForEach(session.duplicateGroups) { group in
-                                    VStack(alignment: .leading) {
-                                        Text("\(group.members.count) assets with equal content")
-                                        Text(group.members.prefix(2).map(\.name).joined(separator: ", ") +
-                                            (group.members.count > 2 ? " +\(group.members.count - 2) more" : ""))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
+                if session.root == nil {
+                    WelcomeView(notice: session.notice, openProject: pickProject)
+                } else {
+                    NavigationSplitView {
+                        VStack(alignment: .leading) {
+                            Text(session.root?.lastPathComponent ?? "No project selected")
+                                .font(.headline)
+                                .padding(.horizontal)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(session.root?.path ?? "Choose a project folder")
+                                .accessibilityIdentifier("projectHeading")
+                            List(selection: Binding(get: { session.selection }, set: { session.select($0) })) {
+                                Section("Project Duplicates") {
+                                    ForEach(session.duplicateGroups) { group in
+                                        VStack(alignment: .leading) {
+                                            Text("\(group.members.count) assets with equal content")
+                                            Text(group.members.prefix(2).map(\.name).joined(separator: ", ") +
+                                                (group.members.count > 2 ? " +\(group.members.count - 2) more" : ""))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                        .tag(SidebarSelection.group(group.id))
+                                        .accessibilityIdentifier("duplicateGroup")
                                     }
-                                    .tag(SidebarSelection.group(group.id))
-                                    .accessibilityIdentifier("duplicateGroup")
                                 }
-                            }
-                            Section("Incoming Images") {
-                                ForEach(session.results) { result in
-                                    VStack(alignment: .leading) {
-                                        Text(result.url.lastPathComponent).lineLimit(1).truncationMode(.middle)
-                                        Text(result.url.deletingLastPathComponent().path)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                            .help(result.url.path)
-                                        Text(result.statusLabel).font(.caption).foregroundStyle(.secondary)
+                                Section("Incoming Images") {
+                                    ForEach(session.results) { result in
+                                        VStack(alignment: .leading) {
+                                            Text(result.url.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                                            Text(result.url.deletingLastPathComponent().path)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                                .help(result.url.path)
+                                            Text(result.statusLabel).font(.caption).foregroundStyle(.secondary)
+                                            Label(session.review(for: result.url).outcome?.label ?? "Unreviewed",
+                                                  systemImage: session.review(for: result.url).outcome == nil ? "circle" : "checkmark.circle")
+                                                .font(.caption)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                        .tag(SidebarSelection.incoming(result.url))
+                                        .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
                                     }
-                                    .tag(SidebarSelection.incoming(result.url))
-                                    .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
                                 }
                             }
                         }
-                    }
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-                } detail: {
-                    if case let .incoming(url) = session.selection,
-                       let result = session.results.first(where: { $0.url == url })
-                    {
-                        ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
-                    } else if let root = session.root {
-                        if case let .group(id) = session.selection,
-                           let group = session.duplicateGroups.first(where: { $0.id == id })
+                        .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+                    } detail: {
+                        if case let .incoming(url) = session.selection,
+                           let result = session.results.first(where: { $0.url == url })
                         {
-                            DuplicateInspection(group: group, root: root).id(group.id)
-                        } else {
-                            ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
-                                                   description: Text("Choose Images to compare incoming images with this project."))
-                        }
-                    } else {
-                        ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
-                                               description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
-                    }
-                }
-                .id(session.id)
-                .toolbar {
-                    #if DEBUG
-                        if ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" {
-                            Picker("Fixture data", selection: $stressDataset) {
-                                ForEach(StressDataset.allCases) { dataset in Text(dataset.title).tag(dataset) }
+                            ComparisonDetail(result: result, session: session)
+                        } else if let root = session.root {
+                            if case let .group(id) = session.selection,
+                               let group = session.duplicateGroups.first(where: { $0.id == id })
+                            {
+                                DuplicateInspection(group: group, root: root).id(group.id)
+                            } else {
+                                ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
+                                                       description: Text("Choose Images to compare incoming images with this project."))
                             }
-                            .accessibilityIdentifier("stressDatasetPicker")
-                            .disabled(preparingStress)
+                        } else {
+                            WelcomeView(notice: session.notice, openProject: pickProject)
                         }
-                    #endif
-                    Button("Open Project…", systemImage: "folder") { pickProject() }
-                        .accessibilityIdentifier("openProject")
-                        .keyboardShortcut("o")
-                        .help("Choose a project folder and discover its image assets.")
-                    Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
-                        .accessibilityIdentifier("chooseImages")
-                        .keyboardShortcut("i")
-                        .disabled(session.root == nil)
-                        .help(session.root == nil
-                            ? Text("Open a project folder first.")
-                            : Text("Choose PNG or JPEG images to find exact matches."))
-                    if session.canCancel {
-                        Button("Cancel Search") { session.cancel() }
-                            .help("Stop the search and keep the matches found so far.")
                     }
-                }
-                .frame(maxHeight: .infinity)
-                .clipped()
+                    .id(session.id)
+                    .toolbar {
+                        #if DEBUG
+                            if ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" {
+                                Picker("Fixture data", selection: $stressDataset) {
+                                    ForEach(StressDataset.allCases) { dataset in Text(dataset.title).tag(dataset) }
+                                }
+                                .accessibilityIdentifier("stressDatasetPicker")
+                                .disabled(preparingStress)
+                            }
+                        #endif
+                        Button("Open Project…", systemImage: "folder") { pickProject() }
+                            .accessibilityIdentifier("openProject")
+                            .keyboardShortcut("o")
+                            .help("Choose a project folder and discover its image assets.")
+                        Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
+                            .accessibilityIdentifier("chooseImages")
+                            .keyboardShortcut("i")
+                            .disabled(session.root == nil)
+                            .help(session.root == nil
+                                ? Text("Open a project folder first.")
+                                : Text("Choose PNG or JPEG images to find exact matches."))
+                        if session.canCancel {
+                            Button("Cancel Search") { session.cancel() }
+                                .help("Stop the search and keep the matches found so far.")
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                    .clipped()
 
-                VStack(alignment: .leading) {
-                    if let notice = session.notice {
-                        Text(notice).foregroundStyle(.orange)
-                    }
-                    #if DEBUG
-                        if let fixtureError {
-                            Text(fixtureError).foregroundStyle(.orange)
+                    VStack(alignment: .leading) {
+                        if let notice = session.notice {
+                            Text(notice).foregroundStyle(.orange)
                         }
-                    #endif
-                    SessionProgress(session: session)
+                        #if DEBUG
+                            if let fixtureError {
+                                Text(fixtureError).foregroundStyle(.orange)
+                            }
+                        #endif
+                        SessionProgress(session: session)
+                    }
+                    .padding()
+                    .background(.bar)
+                    .accessibilityIdentifier("searchFooter")
                 }
-                .padding()
-                .background(.bar)
-                .accessibilityIdentifier("searchFooter")
             }
             // Reapply the measured toolbar inset once, keeping both columns below it.
             .padding(.top, geometry.safeAreaInsets.top)
@@ -143,6 +151,7 @@ struct ContentView: View {
         .environment(session.thumbnails)
         .frame(minWidth: 950, minHeight: 620)
         #if DEBUG
+            .preferredColorScheme(ProcessInfo.processInfo.environment["RUPICK_STRESS_APPEARANCE"] == "light" ? .light : nil)
             .task(id: stressDataset) {
                 guard ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" else {
                     return
@@ -152,14 +161,18 @@ struct ContentView: View {
                 preparingStress = true
                 defer { preparingStress = false }
                 let dataset = stressDataset
-                let task = Task.detached(priority: .utility) { try dataset.makeProject() }
+                let task = Task.detached(priority: .utility) {
+                    let root = try dataset.makeProject()
+                    do { return try (root, dataset.makeIncomingImages(in: root)) }
+                    catch { try? FileManager.default.removeItem(at: root); throw error }
+                }
                 do {
-                    let root = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+                    let (root, incoming) = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
                     guard Task.isCancelled == false else {
                         try? FileManager.default.removeItem(at: root); return
                     }
 
-                    session.openFixture(root: root)
+                    session.openFixture(root: root, incoming: incoming)
                 } catch {
                     if Task.isCancelled == false {
                         fixtureError = "Could not prepare fixture data."
@@ -244,8 +257,10 @@ private struct SessionProgress: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .opacity(session.state == .complete && session.isIncomplete == false ? 1 : 0)
+                    .scaleEffect(reduceMotion || session.state == .complete ? 1 : 0.95)
                     .accessibilityHidden(true)
-                    .animation(.timingCurve(0.23, 1, 0.32, 1, duration: reduceMotion ? 0.1 : 0.16), value: session.state)
+                    // Completion arrives asynchronously; navigation and review actions remain immediate.
+                    .animation(session.state == .complete ? .timingCurve(0.23, 1, 0.32, 1, duration: reduceMotion ? 0.1 : 0.16) : nil, value: session.state)
                 Text(session.phase).accessibilityIdentifier("searchStatus")
                 Spacer()
                 Text("\(session.compared, format: .number) / \(session.discovered, format: .number) assets compared")
@@ -265,6 +280,12 @@ private struct SessionProgress: View {
                 .font(.caption)
                 .monospacedDigit()
                 .accessibilityIdentifier("duplicateGroupCount")
+            if session.results.isEmpty == false {
+                Text("\(session.reviewedCount, format: .number) of \(session.results.count, format: .number) incoming images reviewed")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .accessibilityIdentifier("reviewProgress")
+            }
             if session.isRunning {
                 if session.discovered > 0 {
                     ProgressView(value: Double(session.compared), total: Double(session.discovered))
@@ -287,6 +308,65 @@ private struct SessionProgress: View {
     }
 }
 
+// MARK: - WelcomeView
+
+private struct WelcomeView: View {
+    let notice: String?
+    let openProject: () -> Void
+    private var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 12) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 48, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 96, height: 96)
+                    .background(.blue.gradient, in: RoundedRectangle(cornerRadius: 22))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22)
+                            .strokeBorder(.white.opacity(0.2), lineWidth: 1)
+                    }
+                    .accessibilityHidden(true)
+                VStack(spacing: 4) {
+                    Text("rupick").font(.title2.bold())
+                    Text("Version \(version)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button("Open Project…", action: openProject)
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .keyboardShortcut("o")
+                .accessibilityIdentifier("openProject")
+                .help("Choose a project folder and discover its image assets.")
+            VStack(spacing: 8) {
+                Text("Find matching images").font(.headline)
+                Text("Open a project folder to find exact duplicates in its image assets. Then compare incoming images with the project.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                if let notice {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, minHeight: 180)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .frame(maxWidth: 360)
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 // MARK: - DuplicateInspection
 
 private struct DuplicateInspection: View {
@@ -298,7 +378,7 @@ private struct DuplicateInspection: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 16) {
                 DuplicateHeader(memberCount: group.members.count)
                 PreviewControls(options: $previewOptions)
                 HStack(alignment: .top) {
@@ -306,7 +386,9 @@ private struct DuplicateInspection: View {
                     DuplicateMemberPanel(members: group.members, root: root, selectedID: $rightID, fallback: group.members[1], previewOptions: previewOptions)
                 }
                 Text("Participating assets").font(.headline)
-                ForEach(group.members) { member in DuplicateParticipant(member: member) }
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(group.members) { member in DuplicateParticipant(member: member) }
+                }
             }.padding()
         }
         .accessibilityIdentifier("duplicateScrollView")
@@ -360,6 +442,9 @@ private struct DuplicateMemberPanel: View {
             if members.count == 2 {
                 Text(member.name)
                     .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(member.name)
                     .textSelection(.enabled)
             } else if members.count <= 50 {
                 Picker("Asset", selection: Binding(
@@ -369,7 +454,9 @@ private struct DuplicateMemberPanel: View {
                     ForEach(members) { candidate in
                         Text("\(candidate.name) · \(candidate.location)").tag(candidate.id)
                     }
-                }.accessibilityIdentifier("duplicateMemberPicker")
+                }
+                .help(member.name)
+                .accessibilityIdentifier("duplicateMemberPicker")
             } else {
                 Button {
                     pendingMemberID = member.id
@@ -382,7 +469,7 @@ private struct DuplicateMemberPanel: View {
                 }
                 .accessibilityLabel("Choose asset")
                 .accessibilityValue(member.name)
-                .help(member.location)
+                .help(member.name)
                 .sheet(isPresented: $choosingMember) {
                     VStack {
                         Text("Choose an asset").font(.headline)
@@ -414,6 +501,9 @@ private struct DuplicateMemberPanel: View {
             Text(member.location)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(member.location)
                 .textSelection(.enabled)
             DuplicateMemberPreview(member: member, root: root, previewOptions: previewOptions).id(member.id)
         }
@@ -440,7 +530,7 @@ private struct DuplicateMemberPreview: View {
                 set: { selectedID = $0 }
             )) {
                 ForEach(member.representations) { variant in
-                    Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
+                    Text("\(variant.url.lastPathComponent) · \(variant.label) · \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
                 }
             }.accessibilityIdentifier("duplicateRepresentationPicker")
             if let representation {
@@ -457,25 +547,27 @@ private struct DuplicateMemberPreview: View {
 
 private struct ComparisonDetail: View {
     let result: IncomingResult
-    let root: URL?
-    let searchFailed: Bool
+    let session: ProjectSession
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 20) {
                 Text(result.url.lastPathComponent).font(.title).accessibilityIdentifier("comparisonHeading")
                 if let error = result.error {
                     Text(error).foregroundStyle(.red)
-                } else if searchFailed {
+                } else if session.state == .failed {
                     Text("Search failed. Open the project folder again to retry.").foregroundStyle(.red)
                 } else {
                     Text(result.statusLabel).accessibilityIdentifier("comparisonStatus")
+                }
+                ReviewSummary(outcome: session.review(for: result.url).outcome, isRunning: session.isRunning) {
+                    session.keepAsNew(result.url)
                 }
                 HStack(alignment: .top, spacing: 16) {
                     ImagePreview(url: result.url, title: "Incoming")
                     if result.candidates.isEmpty == false {
                         LazyVStack(alignment: .leading, spacing: 16) {
                             ForEach(result.candidates) { candidate in
-                                CandidateInspection(root: root, candidate: candidate)
+                                CandidateInspection(root: session.root, candidate: candidate, incoming: result.url, session: session)
                             }
                         }.frame(maxWidth: .infinity)
                     }
@@ -486,37 +578,105 @@ private struct ComparisonDetail: View {
     }
 }
 
+// MARK: - ReviewSummary
+
+private struct ReviewSummary: View {
+    let outcome: ReviewOutcome?
+    let isRunning: Bool
+    let keepAsNew: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    outcomeLabel
+                    Spacer()
+                    keepButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    outcomeLabel
+                    keepButton
+                }
+            }
+            if case let .reuse(asset) = outcome {
+                Text(asset.location).font(.caption).textSelection(.enabled)
+                Text("\(asset.representation.url.lastPathComponent) · \(asset.representation.label)")
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+            Text("Decisions stay in this session. Project files are unchanged.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if isRunning {
+                Text("Review when the search finishes.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var outcomeLabel: some View {
+        Label(outcome?.label ?? "Unreviewed", systemImage: outcome == nil ? "circle" : "checkmark.circle.fill")
+            .font(.headline)
+            .accessibilityIdentifier("reviewOutcome")
+    }
+
+    private var keepButton: some View {
+        Button("Keep as New", action: keepAsNew)
+            .accessibilityIdentifier("keepAsNew")
+            .disabled(isRunning)
+            .help("Record this image as new, including when exact matches exist.")
+    }
+}
+
 // MARK: - CandidateInspection
 
 private struct CandidateInspection: View {
     let root: URL?
     let candidate: AssetCandidate
-    @State private var selectedRepresentation: String?
+    let incoming: URL
+    let session: ProjectSession
     private var representation: Representation? {
-        candidate.representations.first(where: { $0.id == selectedRepresentation }) ??
+        candidate.representations.first(where: { $0.id == session.review(for: incoming).representationIDs[candidate.id] }) ??
             candidate.representations.first(where: \.matches)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(candidate.name).font(.headline)
-            Text(candidate.location).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            Text(candidate.name)
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(candidate.name)
+            Text(candidate.location)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(candidate.location)
+                .textSelection(.enabled)
             Picker("Representation", selection: Binding(
-                get: { representation?.id ?? "" }, set: { selectedRepresentation = $0 }
+                get: { representation?.id ?? "" }, set: {
+                    session.selectRepresentation(for: incoming, candidateID: candidate.id, representationID: $0)
+                }
             )) {
                 ForEach(candidate.representations) { variant in
-                    Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
+                    Text("\(variant.url.lastPathComponent) · \(variant.label) · \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
                 }
             }.accessibilityIdentifier("representationPicker")
             if let representation {
-                HStack(alignment: .top, spacing: 16) {
-                    ImagePreview(url: representation.url, title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
+                ImagePreview(url: representation.url, title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
+                Button("Reuse This Asset") {
+                    session.reuseAsset(for: incoming, candidateID: candidate.id, representationID: representation.id)
                 }
+                .accessibilityIdentifier("reuseAsset")
+                .disabled(session.isRunning || representation.matches == false)
+                .help(representation.matches ? Text("Record this asset and matching image file for the session.") : Text("Choose an exact matching representation to reuse this asset."))
             }
         }
         .padding()
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-        .onChange(of: representation?.id, initial: true) { _, id in selectedRepresentation = id }
     }
 }
 

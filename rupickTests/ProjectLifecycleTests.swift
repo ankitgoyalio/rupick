@@ -39,6 +39,34 @@ struct ProjectLifecycleTests {
         #expect(access.isBalanced)
     }
 
+    @Test func refreshPinsReviewRepresentationFallbackBeforeAlternativeReturns() async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let exact = Representation(id: "exact", url: first, label: "Exact", matches: true)
+        let alternative = Representation(id: "alternative", url: second, label: "Alternative", matches: false)
+        func result(_ representations: [Representation]) -> IncomingResult {
+            IncomingResult(url: first, candidates: [AssetCandidate(id: "asset", name: "Asset", location: "Assets", representations: representations)])
+        }
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result([exact, alternative])]))
+        await opening.value
+        session.selectRepresentation(for: first, candidateID: "asset", representationID: alternative.id)
+        session.keepAsNew(first)
+        let refresh = session.refresh(incoming: [first])
+        await scan.waitForRequests(2)
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result([exact])]))
+        await refresh.value
+        #expect(session.review(for: first).representationIDs["asset"] == exact.id)
+        #expect(session.review(for: first).outcome == .keepAsNew)
+        let restored = session.refresh(incoming: [first])
+        await scan.waitForRequests(3)
+        await scan.complete(2, snapshot: ScanSnapshot(results: [result([exact, alternative])]))
+        await restored.value
+        #expect(session.review(for: first).representationIDs["asset"] == exact.id)
+        await session.close().value
+    }
+
     @Test func batchesAndFilesRetainSubmissionOrderDespiteReverseCompletion() async throws {
         let scan = ControlledScan()
         let access = AccessRecorder()

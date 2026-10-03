@@ -8,7 +8,9 @@ The search recursively discovers `.imageset` entries inside `.xcassets` within t
 
 Adding incoming images keeps your current inspection open; select an incoming image in the sidebar to inspect its matches. Batches retain their submission order, even when file loading finishes out of order. Opening a project folder again starts a fresh session.
 
-Progress and provisional matches appear while background work continues. Cancelled searches and skipped or unreadable images remain visibly incomplete. PNG and JPEG representations are supported; PDF, SVG, and other formats are reported as skipped. This milestone does not detect resized copies or changes to transparent padding. Catalog watching, review decisions, and restored sessions are subsequent milestones.
+Progress and provisional matches appear while background work continues. Cancelled searches and skipped or unreadable images remain visibly incomplete. PNG and JPEG representations are supported; PDF, SVG, and other formats are reported as skipped. This milestone does not detect resized copies or changes to transparent padding. Catalog watching and restored sessions are subsequent milestones.
+
+For each incoming image, choose **Reuse This Asset** on an exact matching representation or **Keep as New**, even when matches exist. The sidebar shows reviewed and unreviewed images, and the review card retains the chosen catalog location and image file. Decisions and representation selections remain available while navigating and adding images within the same project session. Opening a project folder again resets them. Decisions never import or modify assets; comparison results remain visible independently.
 
 Run the tests:
 
