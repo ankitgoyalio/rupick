@@ -48,7 +48,7 @@
             let session = ProjectSession()
             await session.start(root: root, incoming: [first]).value
             let candidates = try #require(session.results.first).candidates
-            #expect(!candidates.isEmpty)
+            #expect(candidates.isEmpty == false)
             let refresh = session.start(root: root, incoming: [first, second])
             #expect(session.results.first?.candidates == candidates)
             #expect(session.results.first?.status == .comparing)
@@ -90,13 +90,21 @@
             await session.start(root: root, incoming: []).value
             #expect(session.state == .complete)
             switch dataset {
-            case .empty: #expect(session.discovered == 0 && session.duplicateGroups.isEmpty)
-            case .one: #expect(session.discovered == 1 && session.duplicateGroups.isEmpty)
+            case .empty:
+                #expect(session.discovered == 0 && session.duplicateGroups.isEmpty)
+
+            case .one:
+                #expect(session.discovered == 1 && session.duplicateGroups.isEmpty)
+
             case .worst:
                 #expect(session.duplicateGroups.contains { $0.members.count == 16 })
                 #expect(session.skipped == 3)
-            case .thousand: #expect(session.duplicateGroups.first?.members.count == 1000)
-            case .demo: break
+
+            case .thousand:
+                #expect(session.duplicateGroups.first?.members.count == 1000)
+
+            case .demo:
+                break
             }
         }
     }

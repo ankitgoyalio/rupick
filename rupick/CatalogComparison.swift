@@ -4,6 +4,8 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+// MARK: - NormalizedImage
+
 private struct NormalizedImage {
     let image: CIImage
     let width: Int
@@ -17,15 +19,21 @@ private struct NormalizedImage {
         else {
             throw CocoaError(.fileReadCorruptFile)
         }
+
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
         let orientation = (properties?[kCGImagePropertyOrientation as String] as? NSNumber)?.int32Value ?? 1
         image = CIImage(cgImage: cgImage).oriented(forExifOrientation: orientation)
         width = Int(image.extent.width); height = Int(image.extent.height)
         // Bound temporary decode memory; an oversized file is reported, never called a non-match.
         guard width > 0, height > 0, width <= 8192, height <= 8192,
-              width * height <= 16_777_216 else { throw CocoaError(.fileReadTooLarge) }
+              width * height <= 16_777_216
+        else {
+            throw CocoaError(.fileReadTooLarge)
+        }
     }
 }
+
+// MARK: - DecodedPixels
 
 private struct DecodedPixels: Equatable {
     let width: Int
@@ -37,7 +45,8 @@ private struct DecodedPixels: Equatable {
     }
 
     init(image: NormalizedImage, context: CIContext) {
-        let width = image.width, height = image.height
+        let width = image.width
+        let height = image.height
         self.width = width; self.height = height
         var pixels = [Float](repeating: 0, count: width * height * 4)
         pixels.withUnsafeMutableBytes {
@@ -61,6 +70,8 @@ private struct DecodedPixels: Equatable {
     }
 }
 
+// MARK: - PixelFingerprint
+
 private struct PixelFingerprint: Hashable {
     let width: Int
     let height: Int
@@ -70,6 +81,8 @@ private struct PixelFingerprint: Hashable {
         digest = pixels.values.withUnsafeBytes { SHA256.hash(data: $0) }
     }
 }
+
+// MARK: - CatalogContents
 
 private struct CatalogContents: Decodable {
     struct Image: Decodable {
@@ -87,10 +100,14 @@ private struct CatalogContents: Decodable {
     let images: [Image]
 }
 
+// MARK: - ContentBucket
+
 private struct ContentBucket {
     let reference: URL
-    var members: [AssetCandidate] = []
+    var members = [AssetCandidate]()
 }
+
+// MARK: - CatalogComparison
 
 enum CatalogComparison {
     static func run(root: URL, incoming: [URL], publish: @Sendable (ScanSnapshot) async -> Void) async {
@@ -101,12 +118,13 @@ enum CatalogComparison {
             snapshot.error = "The project folder is unavailable. Choose it again."
             await publish(snapshot); return
         }
+
         func withinRoot(_ url: URL) -> Bool {
             let path = url.resolvingSymlinksInPath().standardizedFileURL.path
             return path.hasPrefix(boundary.path.hasSuffix("/") ? boundary.path : boundary.path + "/")
         }
         let ignoreRules = ProjectIgnoreRules(root: boundary)
-        var entries: [URL] = []
+        var entries = [URL]()
         guard let enumerator = FileManager.default.enumerator(at: boundary,
                                                               includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey], options: [],
                                                               errorHandler: { _, _ in snapshot.skipped += 1; return true })
@@ -114,6 +132,7 @@ enum CatalogComparison {
             snapshot.error = "The project folder could not be read. Choose it again."
             await publish(snapshot); return
         }
+
         while let url = enumerator.nextObject() as? URL {
             if Task.isCancelled {
                 return
@@ -139,7 +158,7 @@ enum CatalogComparison {
                         parent.deleteLastPathComponent()
                     }
                     if parent.pathExtension == "xcassets",
-                       try !ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false)
+                       try ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) == false
                     {
                         entries.append(url)
                     }
@@ -156,8 +175,8 @@ enum CatalogComparison {
         let context = CIContext(options: [.useSoftwareRenderer: true, .outputPremultiplied: false,
                                           .workingFormat: CIFormat.RGBAf,
                                           .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
-        var incomingFingerprints: [PixelFingerprint?] = []
-        var buckets: [PixelFingerprint: [ContentBucket]] = [:]
+        var incomingFingerprints = [PixelFingerprint?]()
+        var buckets = [PixelFingerprint: [ContentBucket]]()
         snapshot.phase = "Reading incoming images…"
         for index in incoming.indices {
             if Task.isCancelled {
@@ -188,16 +207,23 @@ enum CatalogComparison {
             }
             do {
                 let contentsURL = entry.appendingPathComponent("Contents.json")
-                guard withinRoot(contentsURL), try contentsURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw CocoaError(.fileReadNoPermission) }
+                guard withinRoot(contentsURL), try contentsURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+                    throw CocoaError(.fileReadNoPermission)
+                }
+
                 let contents = try JSONDecoder().decode(CatalogContents.self, from: Data(contentsOf: contentsURL))
-                var variants: [(id: String, url: URL, label: String, matchingInputs: Set<Int>)] = []
-                var entryBuckets: [(fingerprint: PixelFingerprint, index: Int, representationID: String)] = []
+                var variants = [(id: String, url: URL, label: String, matchingInputs: Set<Int>)]()
+                var entryBuckets = [(fingerprint: PixelFingerprint, index: Int, representationID: String)]()
                 for (imageIndex, image) in contents.images.enumerated() {
-                    guard let filename = image.filename else { continue }
+                    guard let filename = image.filename else {
+                        continue
+                    }
+
                     let url = entry.appendingPathComponent(filename)
                     guard url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
                         snapshot.skipped += 1; continue
                     }
+
                     if try ignoreRules.ignores(url, isDirectory: false) {
                         continue
                     }
@@ -206,12 +232,16 @@ enum CatalogComparison {
                     else {
                         snapshot.skipped += 1; continue
                     }
+
                     if Task.isCancelled {
                         return
                     }
                     let representationID = url.path + "#" + String(imageIndex)
                     let matchingInputs: Set<Int>? = autoreleasepool { () -> Set<Int>? in
-                        guard let normalized = try? NormalizedImage(url: url) else { return nil }
+                        guard let normalized = try? NormalizedImage(url: url) else {
+                            return nil
+                        }
+
                         let pixels = DecodedPixels(image: normalized, context: context)
                         let fingerprint = PixelFingerprint(pixels)
                         var contentBuckets = buckets[fingerprint, default: []]
@@ -225,7 +255,10 @@ enum CatalogComparison {
                         entryBuckets.append((fingerprint, bucketIndex, representationID))
                         // Hash only narrows the search. Verify every actual match with component equality.
                         return Set(incoming.indices.filter { index in
-                            guard incomingFingerprints[index] == fingerprint else { return false }
+                            guard incomingFingerprints[index] == fingerprint else {
+                                return false
+                            }
+
                             return (try? DecodedPixels(url: incoming[index], context: context)) == pixels
                         })
                     }
@@ -246,10 +279,14 @@ enum CatalogComparison {
                 var updated = Set<String>()
                 for content in entryBuckets {
                     let groupID = buckets[content.fingerprint]![content.index].reference.path
-                    guard updated.insert(groupID).inserted else { continue }
+                    guard updated.insert(groupID).inserted else {
+                        continue
+                    }
+
                     let matchingIDs = Set(entryBuckets.filter {
                         $0.fingerprint == content.fingerprint && $0.index == content.index
-                    }.map(\.representationID))
+                    }
+                    .map(\.representationID))
                     let member = candidate(matchingIDs: matchingIDs)
                     buckets[content.fingerprint]![content.index].members.append(member)
                     let bucket = buckets[content.fingerprint]![content.index]
@@ -263,7 +300,10 @@ enum CatalogComparison {
                     }
                 }
                 for index in incoming.indices {
-                    guard variants.contains(where: { $0.matchingInputs.contains(index) }) else { continue }
+                    guard variants.contains(where: { $0.matchingInputs.contains(index) }) else {
+                        continue
+                    }
+
                     let matchingIDs = Set(variants.filter { $0.matchingInputs.contains(index) }.map(\.id))
                     snapshot.results[index].candidates.append(candidate(matchingIDs: matchingIDs))
                 }

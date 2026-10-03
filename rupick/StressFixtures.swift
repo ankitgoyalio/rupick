@@ -5,33 +5,57 @@
 
     /// Explicitly enabled with RUPICK_STRESS_UI=1; never included in Release builds.
     enum StressDataset: String, CaseIterable, Identifiable, Sendable {
-        case demo, worst, empty, one, thousand
+        case demo
+        case worst
+        case empty
+        case one
+        case thousand
         var id: Self {
             self
         }
 
         var title: String {
             switch self {
-            case .demo: "Demo"
-            case .worst: "Worst case"
-            case .empty: "Empty"
-            case .one: "One"
-            case .thousand: "1,000 assets"
+            case .demo:
+                "Demo"
+
+            case .worst:
+                "Worst case"
+
+            case .empty:
+                "Empty"
+
+            case .one:
+                "One"
+
+            case .thousand:
+                "1,000 assets"
             }
         }
 
         func makeProject() throws -> URL {
-            let root = FileManager.default.temporaryDirectory
+            let root = FileManager.default
+                .temporaryDirectory
                 .appendingPathComponent("Rupick UI Fixtures/\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             do {
-                let count = switch self {
-                case .empty: 0
-                case .one: 1
-                case .demo: 3
-                case .worst: 16
-                case .thousand: 1000
-                }
+                let count =
+                    switch self {
+                    case .empty:
+                        0
+
+                    case .one:
+                        1
+
+                    case .demo:
+                        3
+
+                    case .worst:
+                        16
+
+                    case .thousand:
+                        1000
+                    }
                 // Transparent artwork exercises light, dark, and checkerboard backgrounds.
                 let bytes = Data([20, 20, 20, 255, 0, 0, 0, 0])
                 guard let provider = CGDataProvider(data: bytes as CFData),
@@ -42,6 +66,7 @@
                 else {
                     throw CocoaError(.fileWriteUnknown)
                 }
+
                 let names = ["PaymentConfirmationIllustration-Dark-HighContrast-Final",
                              "Icon", "J", "Đặng-Thị-Ngọc-Hân", "王秀英", "نور-الهدى", "👩🏽‍💻-Workspace"]
                 for index in 0 ..< count {
@@ -53,8 +78,12 @@
                     guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
                         throw CocoaError(.fileWriteUnknown)
                     }
+
                     CGImageDestinationAddImage(destination, image, nil)
-                    guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+                    guard CGImageDestinationFinalize(destination) else {
+                        throw CocoaError(.fileWriteUnknown)
+                    }
+
                     try Data(#"{"images":[{"filename":"illustration-dark-contrast@3x.png","scale":"3x","appearances":[{"appearance":"luminosity","value":"dark"}]}]}"#.utf8)
                         .write(to: entry.appendingPathComponent("Contents.json"))
                 }
@@ -70,6 +99,7 @@
                         else {
                             throw CocoaError(.fileWriteUnknown)
                         }
+
                         for index in 0 ..< 2 {
                             let entry = root.appendingPathComponent("Media.xcassets/\(name)\(index).imageset")
                             try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
@@ -78,8 +108,12 @@
                             else {
                                 throw CocoaError(.fileWriteUnknown)
                             }
+
                             CGImageDestinationAddImage(destination, pixels, nil)
-                            guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+                            guard CGImageDestinationFinalize(destination) else {
+                                throw CocoaError(.fileWriteUnknown)
+                            }
+
                             let metadata = index == 0
                                 ? #"{"images":[{"filename":"image.png","scale":"1x"},{"filename":"missing-dark.png","scale":"2x"}]}"#
                                 : #"{"images":[{"filename":"image.png","scale":"1x"}]}"#

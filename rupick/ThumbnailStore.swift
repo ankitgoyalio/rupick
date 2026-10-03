@@ -3,6 +3,8 @@ import ImageIO
 import Observation
 import SwiftUI
 
+// MARK: - Thumbnail
+
 struct Thumbnail: Sendable {
     let url: URL
     let pixels: CGImage
@@ -12,6 +14,8 @@ struct Thumbnail: Sendable {
         NSImage(cgImage: pixels, size: .zero)
     }
 }
+
+// MARK: - ThumbnailStore
 
 /// A window-owned cache. The actor serializes decoding, including requests for the same file.
 @MainActor @Observable
@@ -23,6 +27,8 @@ final class ThumbnailStore {
     }
 }
 
+// MARK: - ThumbnailCache
+
 actor ThumbnailCache {
     private struct Key: Hashable {
         let url: URL
@@ -31,13 +37,16 @@ actor ThumbnailCache {
         let fullSize: Bool
     }
 
-    private var values: [Key: Thumbnail] = [:]
-    private var order: [Key] = []
+    private var values = [Key: Thumbnail]()
+    private var order = [Key]()
     private var cost = 0
     private let limit = 32 * 1024 * 1024
 
     func load(url: URL, scope: URL, fullSize: Bool) -> Thumbnail? {
-        guard !Task.isCancelled else { return nil }
+        guard Task.isCancelled == false else {
+            return nil
+        }
+
         let acquired = scope.startAccessingSecurityScopedResource()
         defer {
             if acquired {
@@ -56,17 +65,25 @@ actor ThumbnailCache {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
               let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight as String] as? Int else { return nil }
+              let height = properties[kCGImagePropertyPixelHeight as String] as? Int
+        else {
+            return nil
+        }
+
         // Actual-size inspection follows the comparison engine's memory limits.
         if fullSize, width > 8192 || height > 8192 || width <= 0 || height <= 0 || width * height > 16_777_216 {
             return nil
         }
-        guard !Task.isCancelled,
+        guard Task.isCancelled == false,
               let pixels = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true,
                   kCGImageSourceCreateThumbnailWithTransform: true,
                   kCGImageSourceThumbnailMaxPixelSize: fullSize ? max(width, height) : 800,
-              ] as CFDictionary), !Task.isCancelled else { return nil }
+              ] as CFDictionary), Task.isCancelled == false
+        else {
+            return nil
+        }
+
         let orientation = properties[kCGImagePropertyOrientation as String] as? Int ?? 1
         let rotated = (5 ... 8).contains(orientation)
         let value = Thumbnail(url: url, pixels: pixels, width: rotated ? height : width, height: rotated ? width : height)
@@ -84,27 +101,42 @@ actor ThumbnailCache {
     }
 }
 
+// MARK: - PreviewBackground
+
 enum PreviewBackground: String, CaseIterable, Identifiable {
-    case checkerboard, light, dark
+    case checkerboard
+    case light
+    case dark
     var id: Self {
         self
     }
 
     var title: LocalizedStringKey {
         switch self {
-        case .checkerboard: "Grid"
-        case .light: "Light"
-        case .dark: "Dark"
+        case .checkerboard:
+            "Grid"
+
+        case .light:
+            "Light"
+
+        case .dark:
+            "Dark"
         }
     }
 }
+
+// MARK: - PreviewBackdrop
 
 struct PreviewBackdrop: View {
     let style: PreviewBackground
     var body: some View {
         switch style {
-        case .light: Color.white
-        case .dark: Color.black
+        case .light:
+            Color.white
+
+        case .dark:
+            Color.black
+
         case .checkerboard:
             Canvas { context, size in
                 let tile: CGFloat = 12
