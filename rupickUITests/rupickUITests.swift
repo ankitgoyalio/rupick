@@ -7,7 +7,7 @@ final class rupickUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
     @MainActor
-    func testScrollContentStaysAboveSearchFooter() throws {
+    func testScrollContentStaysBetweenToolbarAndSearchFooter() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-scroll-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
@@ -21,27 +21,58 @@ final class rupickUITests: XCTestCase {
         choose(root.path, in: app)
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         let scroll = app.scrollViews["duplicateScrollView"]
-        let footer = app.descendants(matching: .any)["searchFooter"].firstMatch
-        XCTAssertTrue(scroll.exists)
-        XCTAssertTrue(footer.exists)
-        XCTAssertLessThanOrEqual(scroll.frame.maxY, footer.frame.minY + 1,
-                                 "The scrolling detail viewport must end above the fixed search footer.")
-        scroll.scroll(byDeltaX: 0, deltaY: -2000)
         let finalMember = try XCTUnwrap(app.staticTexts.matching(identifier: "Packages/Other.xcassets/Icon.imageset").allElementsBoundByIndex.last)
-        XCTAssertTrue(finalMember.isHittable)
-        XCTAssertLessThanOrEqual(finalMember.frame.maxY, footer.frame.minY,
-                                 "The last participant must be fully visible after scrolling to the bottom.")
+        assertScrollBounds(scroll, heading: app.staticTexts["Exact duplicate content"],
+                           lastContent: finalMember, in: app)
 
         app.buttons["chooseImages"].click()
         choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
         XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         let comparison = app.scrollViews["comparisonScrollView"]
-        XCTAssertLessThanOrEqual(comparison.frame.maxY, footer.frame.minY + 1)
-        comparison.scroll(byDeltaX: 0, deltaY: -10000)
         let finalPreview = try XCTUnwrap(app.staticTexts.matching(identifier: "light.png").allElementsBoundByIndex.last)
-        XCTAssertTrue(finalPreview.isHittable)
-        XCTAssertLessThanOrEqual(finalPreview.frame.maxY, footer.frame.minY)
+        assertScrollBounds(comparison, heading: app.staticTexts["comparisonHeading"],
+                           lastContent: finalPreview, in: app)
+    }
+
+    @MainActor
+    private func assertScrollBounds(_ scroll: XCUIElement, heading: XCUIElement,
+                                    lastContent: XCUIElement, in app: XCUIApplication,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.windows.firstMatch
+        let toolbar = app.windows.firstMatch.toolbars.firstMatch
+        let footer = app.descendants(matching: .any)["searchFooter"].firstMatch
+        XCTAssertTrue(toolbar.exists, file: file, line: line)
+        XCTAssertTrue(footer.exists, file: file, line: line)
+        XCTAssertTrue(scroll.exists, file: file, line: line)
+        for sizeChange in [CGVector.zero, CGVector(dx: 220, dy: 120), CGVector(dx: -220, dy: -120)] {
+            if sizeChange != .zero {
+                let previousSize = window.frame.size
+                let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+                    .withOffset(CGVector(dx: -2, dy: -2))
+                corner.press(forDuration: 0.2, thenDragTo: corner.withOffset(sizeChange))
+                XCTAssertEqual(window.frame.width, previousSize.width + sizeChange.dx, accuracy: 5, file: file, line: line)
+                XCTAssertEqual(window.frame.height, previousSize.height + sizeChange.dy, accuracy: 5, file: file, line: line)
+            }
+            scroll.scroll(byDeltaX: 0, deltaY: 10000)
+            XCTAssertGreaterThanOrEqual(scroll.frame.minY, toolbar.frame.maxY, file: file, line: line)
+            for element in [heading, app.staticTexts["projectHeading"]] {
+                XCTAssertGreaterThanOrEqual(element.frame.minY, toolbar.frame.maxY,
+                                           "Content must be fully below the toolbar.", file: file, line: line)
+                XCTAssertLessThanOrEqual(element.frame.minY, toolbar.frame.maxY + 24,
+                                        "The toolbar inset must not be counted twice.", file: file, line: line)
+                XCTAssertTrue(element.isHittable, file: file, line: line)
+            }
+            XCTAssertLessThanOrEqual(scroll.frame.maxY, footer.frame.minY + 1, file: file, line: line)
+            scroll.scroll(byDeltaX: 0, deltaY: -10000)
+            XCTAssertTrue(lastContent.isHittable, file: file, line: line)
+            XCTAssertLessThanOrEqual(lastContent.frame.maxY, footer.frame.minY,
+                                     "The final content must remain above the footer.", file: file, line: line)
+        }
+        scroll.scroll(byDeltaX: 0, deltaY: 10000)
+        let screenshot = XCTAttachment(screenshot: window.screenshot())
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor

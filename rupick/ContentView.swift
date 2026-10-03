@@ -12,74 +12,81 @@ struct ContentView: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            NavigationSplitView {
-                VStack(alignment: .leading) {
-                    Text(session.root?.lastPathComponent ?? "No project selected")
-                        .font(.headline).padding(.horizontal)
-                    Button("Project Duplicates") { selectedIncoming = nil }
-                        .accessibilityIdentifier("projectDuplicates").padding(.horizontal)
-                    if selectedIncoming == nil {
-                        List(session.duplicateGroups, selection: $selectedGroup) { group in
-                            VStack(alignment: .leading) {
-                                Text("\(group.members.count) assets with equal content")
-                                Text(group.members.map(\.name).joined(separator: ", "))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }.tag(group.id).accessibilityIdentifier("duplicateGroup")
-                        }
-                    }
-                    if !session.results.isEmpty {
-                        List(session.results, selection: $selectedIncoming) { result in
-                            VStack(alignment: .leading) {
-                                Text(result.url.lastPathComponent)
-                                Text(result.statusText)
-                                    .font(.caption).foregroundStyle(.secondary)
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                NavigationSplitView {
+                    VStack(alignment: .leading) {
+                        Text(session.root?.lastPathComponent ?? "No project selected")
+                            .font(.headline).padding(.horizontal)
+                            .accessibilityIdentifier("projectHeading")
+                        Button("Project Duplicates") { selectedIncoming = nil }
+                            .accessibilityIdentifier("projectDuplicates").padding(.horizontal)
+                        if selectedIncoming == nil {
+                            List(session.duplicateGroups, selection: $selectedGroup) { group in
+                                VStack(alignment: .leading) {
+                                    Text("\(group.members.count) assets with equal content")
+                                    Text(group.members.map(\.name).joined(separator: ", "))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }.tag(group.id).accessibilityIdentifier("duplicateGroup")
                             }
-                            .tag(result.url)
-                            .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
+                        }
+                        if !session.results.isEmpty {
+                            List(session.results, selection: $selectedIncoming) { result in
+                                VStack(alignment: .leading) {
+                                    Text(result.url.lastPathComponent)
+                                    Text(result.statusText)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                .tag(result.url)
+                                .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
+                            }
                         }
                     }
-                }
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-            } detail: {
-                if let result = session.results.first(where: { $0.url == selectedIncoming }) {
-                    ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
-                } else if let root = session.root {
-                    if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
-                        DuplicateInspection(group: group, root: root).id(group.id)
+                    .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+                } detail: {
+                    if let result = session.results.first(where: { $0.url == selectedIncoming }) {
+                        ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
+                    } else if let root = session.root {
+                        if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
+                            DuplicateInspection(group: group, root: root).id(group.id)
+                        } else {
+                            ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
+                                description: Text("Choose Images to compare incoming images with this project."))
+                        }
                     } else {
-                        ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
-                            description: Text("Choose Images to compare incoming images with this project."))
+                        ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
+                            description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
                     }
-                } else {
-                    ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
-                        description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
                 }
-            }
-            .frame(maxHeight: .infinity)
-            .clipped()
+                .toolbar {
+                    Button("Open Project…", systemImage: "folder") { pickProject() }
+                        .accessibilityIdentifier("openProject").keyboardShortcut("o")
+                        .help("Choose a project folder and discover its image assets.")
+                    Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
+                        .accessibilityIdentifier("chooseImages").keyboardShortcut("i")
+                        .disabled(session.root == nil)
+                        .help(session.root == nil
+                              ? Text("Open a project folder first.")
+                              : Text("Choose PNG or JPEG images to find exact matches."))
+                    if session.isRunning {
+                        Button("Cancel Search") { session.cancel() }
+                            .help("Stop the search and keep the matches found so far.")
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .clipped()
 
-            VStack(alignment: .leading) {
-                if let dropNotice { Text(dropNotice).foregroundStyle(.orange) }
-                SessionProgress(session: session)
-            }.padding().background(.bar)
-                .accessibilityIdentifier("searchFooter")
-        }
-        .toolbar {
-            Button("Open Project…", systemImage: "folder") { pickProject() }
-                .accessibilityIdentifier("openProject").keyboardShortcut("o")
-                .help("Choose a project folder and discover its image assets.")
-            Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
-                .accessibilityIdentifier("chooseImages").keyboardShortcut("i")
-                .disabled(session.root == nil)
-                .help(session.root == nil
-                      ? Text("Open a project folder first.")
-                      : Text("Choose PNG or JPEG images to find exact matches."))
-            if session.isRunning {
-                Button("Cancel Search") { session.cancel() }
-                    .help("Stop the search and keep the matches found so far.")
+                VStack(alignment: .leading) {
+                    if let dropNotice { Text(dropNotice).foregroundStyle(.orange) }
+                    SessionProgress(session: session)
+                }.padding().background(.bar)
+                    .accessibilityIdentifier("searchFooter")
             }
+            // Reapply the measured toolbar inset once, keeping both columns below it.
+            .padding(.top, geometry.safeAreaInsets.top)
         }
+        // Measure the full window; the stack above owns the top inset and footer space.
+        .ignoresSafeArea(.container, edges: .top)
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 12).stroke(.tint, lineWidth: 3).padding(6).allowsHitTesting(false)
@@ -316,7 +323,7 @@ private struct ComparisonDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(result.url.lastPathComponent).font(.title)
+                Text(result.url.lastPathComponent).font(.title).accessibilityIdentifier("comparisonHeading")
                 if let error = result.error {
                     Text(error).foregroundStyle(.red)
                 } else if searchFailed {
