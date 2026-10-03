@@ -7,6 +7,44 @@ final class rupickUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
     @MainActor
+    func testScrollContentStaysAboveSearchFooter() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-scroll-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try copyFixture(to: root)
+        for index in 0..<12 {
+            let entry = root.appendingPathComponent("App/Primary.xcassets/Copy\(index).imageset")
+            try FileManager.default.copyItem(at: root.appendingPathComponent("App/Primary.xcassets/Icon.imageset"), to: entry)
+        }
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let scroll = app.scrollViews["duplicateScrollView"]
+        let footer = app.descendants(matching: .any)["searchFooter"].firstMatch
+        XCTAssertTrue(scroll.exists)
+        XCTAssertTrue(footer.exists)
+        XCTAssertLessThanOrEqual(scroll.frame.maxY, footer.frame.minY + 1,
+                                 "The scrolling detail viewport must end above the fixed search footer.")
+        scroll.scroll(byDeltaX: 0, deltaY: -2000)
+        let finalMember = try XCTUnwrap(app.staticTexts.matching(identifier: "Packages/Other.xcassets/Icon.imageset").allElementsBoundByIndex.last)
+        XCTAssertTrue(finalMember.isHittable)
+        XCTAssertLessThanOrEqual(finalMember.frame.maxY, footer.frame.minY,
+                                 "The last participant must be fully visible after scrolling to the bottom.")
+
+        app.buttons["chooseImages"].click()
+        choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let comparison = app.scrollViews["comparisonScrollView"]
+        XCTAssertLessThanOrEqual(comparison.frame.maxY, footer.frame.minY + 1)
+        comparison.scroll(byDeltaX: 0, deltaY: -10000)
+        let finalPreview = try XCTUnwrap(app.staticTexts.matching(identifier: "light.png").allElementsBoundByIndex.last)
+        XCTAssertTrue(finalPreview.isHittable)
+        XCTAssertLessThanOrEqual(finalPreview.frame.maxY, footer.frame.minY)
+    }
+
+    @MainActor
     func testProjectDuplicateGroupsWithoutIncomingImages() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-duplicates-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -220,7 +258,7 @@ final class rupickUITests: XCTestCase {
         for name in ["broken.png", "renamed.png", "new.png", "new.jpg", "new.jpe"] {
             XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "incoming-" + name).firstMatch.waitForExistence(timeout: 30))
         }
-        let broken = app.staticTexts["broken.png"].firstMatch
+        let broken = app.descendants(matching: .any).matching(identifier: "incoming-broken.png").firstMatch
         XCTAssertTrue(broken.waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["3 / 3 assets compared"].exists)

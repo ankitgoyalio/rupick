@@ -12,54 +12,58 @@ struct ContentView: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        NavigationSplitView {
-            VStack(alignment: .leading) {
-                Text(session.root?.lastPathComponent ?? "No project selected")
-                    .font(.headline).padding(.horizontal)
-                Button("Project Duplicates") { selectedIncoming = nil }
-                    .accessibilityIdentifier("projectDuplicates").padding(.horizontal)
-                if selectedIncoming == nil {
-                    List(session.duplicateGroups, selection: $selectedGroup) { group in
-                        VStack(alignment: .leading) {
-                            Text("\(group.members.count) assets with equal content")
-                            Text(group.members.map(\.name).joined(separator: ", "))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }.tag(group.id).accessibilityIdentifier("duplicateGroup")
-                    }
-                }
-                if !session.results.isEmpty {
-                    List(session.results, selection: $selectedIncoming) { result in
-                        VStack(alignment: .leading) {
-                            Text(result.url.lastPathComponent)
-                            Text(result.statusText)
-                                .font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            NavigationSplitView {
+                VStack(alignment: .leading) {
+                    Text(session.root?.lastPathComponent ?? "No project selected")
+                        .font(.headline).padding(.horizontal)
+                    Button("Project Duplicates") { selectedIncoming = nil }
+                        .accessibilityIdentifier("projectDuplicates").padding(.horizontal)
+                    if selectedIncoming == nil {
+                        List(session.duplicateGroups, selection: $selectedGroup) { group in
+                            VStack(alignment: .leading) {
+                                Text("\(group.members.count) assets with equal content")
+                                Text(group.members.map(\.name).joined(separator: ", "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.tag(group.id).accessibilityIdentifier("duplicateGroup")
                         }
-                        .tag(result.url)
-                        .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
+                    }
+                    if !session.results.isEmpty {
+                        List(session.results, selection: $selectedIncoming) { result in
+                            VStack(alignment: .leading) {
+                                Text(result.url.lastPathComponent)
+                                Text(result.statusText)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .tag(result.url)
+                            .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
+                        }
                     }
                 }
-            }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-        } detail: {
-            if let result = session.results.first(where: { $0.url == selectedIncoming }) {
-                ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
-            } else if let root = session.root {
-                if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
-                    DuplicateInspection(group: group, root: root).id(group.id)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+            } detail: {
+                if let result = session.results.first(where: { $0.url == selectedIncoming }) {
+                    ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
+                } else if let root = session.root {
+                    if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
+                        DuplicateInspection(group: group, root: root).id(group.id)
+                    } else {
+                        ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
+                            description: Text("Choose Images to compare incoming images with this project."))
+                    }
                 } else {
-                    ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
-                        description: Text("Choose Images to compare incoming images with this project."))
+                    ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
+                        description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
                 }
-            } else {
-                ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
-                    description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
             }
-        }
-        .safeAreaInset(edge: .bottom) {
+            .frame(maxHeight: .infinity)
+            .clipped()
+
             VStack(alignment: .leading) {
                 if let dropNotice { Text(dropNotice).foregroundStyle(.orange) }
                 SessionProgress(session: session)
             }.padding().background(.bar)
+                .accessibilityIdentifier("searchFooter")
         }
         .toolbar {
             Button("Open Project…", systemImage: "folder") { pickProject() }
@@ -218,6 +222,7 @@ private struct DuplicateInspection: View {
                 DuplicateParticipants(members: group.members)
             }.padding()
         }
+        .accessibilityIdentifier("duplicateScrollView")
     }
 
 }
@@ -327,6 +332,7 @@ private struct ComparisonDetail: View {
                 }
             }.padding()
         }
+        .accessibilityIdentifier("comparisonScrollView")
     }
 }
 
