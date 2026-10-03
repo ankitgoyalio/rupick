@@ -90,3 +90,11 @@ Stress validation also exposed a resize feedback loop when an inspection's lazil
 ![Light appearance at minimum window size with synthetic worst-case data](images/review-light.png)
 
 ![Dark appearance at minimum window size with synthetic worst-case data](images/review-dark.png)
+
+## Welcome screen
+
+With no project selected, the window shows a centered app mark, app name and version, a native Open Project button, and a rounded guidance card. The sidebar, comparison counters, and incoming-image controls appear after choosing a project. Native acceptance checks Light and Dark appearances, opening and cancelling the folder picker by click and Command-O, and transition into the existing project inspection flow. The welcome, native picker/representation, and scroll-layout tests passed after this change.
+
+![Welcome screen in Light appearance](images/welcome-light.png)
+
+![Welcome screen in Dark appearance](images/welcome-dark.png)

@@ -10,6 +10,36 @@ final class rupickUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    @MainActor
+    func testWelcomeScreenAndOpenProjectAction() {
+        for appearance in ["light", "dark"] {
+            let app = XCUIApplication()
+            app.launchEnvironment["RUPICK_STRESS_APPEARANCE"] = appearance
+            app.launchArguments = ["-AppleInterfaceStyle", appearance.capitalized]
+            app.launch()
+            let button = app.buttons["openProject"]
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            XCTAssertTrue(button.isHittable)
+            XCTAssertTrue(app.staticTexts["Find matching images"].exists)
+            XCTAssertFalse(app.staticTexts["projectHeading"].exists)
+            XCTAssertFalse(app.descendants(matching: .any)["searchFooter"].exists)
+            XCTAssertFalse(app.buttons["chooseImages"].exists)
+            let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            screenshot.name = "Welcome \(appearance)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            button.click()
+            let cancel = app.windows["open-panel"].buttons["CancelButton"]
+            XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+            cancel.click()
+            XCTAssertTrue(button.isHittable)
+            app.typeKey("o", modifierFlags: .command)
+            XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+            cancel.click()
+            app.terminate()
+        }
+    }
+
     #if DEBUG
         @MainActor
         func testStressFixturesAndPreviewControls() {

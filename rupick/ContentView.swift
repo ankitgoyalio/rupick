@@ -24,108 +24,111 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                NavigationSplitView {
-                    VStack(alignment: .leading) {
-                        Text(session.root?.lastPathComponent ?? "No project selected")
-                            .font(.headline)
-                            .padding(.horizontal)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(session.root?.path ?? "Choose a project folder")
-                            .accessibilityIdentifier("projectHeading")
-                        List(selection: sidebarSelection) {
-                            Section("Project Duplicates") {
-                                ForEach(session.duplicateGroups) { group in
-                                    VStack(alignment: .leading) {
-                                        Text("\(group.members.count) assets with equal content")
-                                        Text(group.members.prefix(2).map(\.name).joined(separator: ", ") +
-                                            (group.members.count > 2 ? " +\(group.members.count - 2) more" : ""))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
+                if session.root == nil {
+                    WelcomeView(notice: dropNotice, openProject: pickProject)
+                } else {
+                    NavigationSplitView {
+                        VStack(alignment: .leading) {
+                            Text(session.root?.lastPathComponent ?? "No project selected")
+                                .font(.headline)
+                                .padding(.horizontal)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(session.root?.path ?? "Choose a project folder")
+                                .accessibilityIdentifier("projectHeading")
+                            List(selection: sidebarSelection) {
+                                Section("Project Duplicates") {
+                                    ForEach(session.duplicateGroups) { group in
+                                        VStack(alignment: .leading) {
+                                            Text("\(group.members.count) assets with equal content")
+                                            Text(group.members.prefix(2).map(\.name).joined(separator: ", ") +
+                                                (group.members.count > 2 ? " +\(group.members.count - 2) more" : ""))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                        .tag(SidebarSelection.group(group.id))
+                                        .accessibilityIdentifier("duplicateGroup")
                                     }
-                                    .tag(SidebarSelection.group(group.id))
-                                    .accessibilityIdentifier("duplicateGroup")
                                 }
-                            }
-                            Section("Incoming Images") {
-                                ForEach(session.results) { result in
-                                    VStack(alignment: .leading) {
-                                        Text(result.url.lastPathComponent).lineLimit(1).truncationMode(.middle)
-                                        Text(result.url.deletingLastPathComponent().path)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                            .help(result.url.path)
-                                        Text(result.statusLabel).font(.caption).foregroundStyle(.secondary)
-                                        Label(session.review(for: result.url).outcome?.label ?? "Unreviewed",
-                                              systemImage: session.review(for: result.url).outcome == nil ? "circle" : "checkmark.circle")
-                                            .font(.caption)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
+                                Section("Incoming Images") {
+                                    ForEach(session.results) { result in
+                                        VStack(alignment: .leading) {
+                                            Text(result.url.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                                            Text(result.url.deletingLastPathComponent().path)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                                .help(result.url.path)
+                                            Text(result.statusLabel).font(.caption).foregroundStyle(.secondary)
+                                            Label(session.review(for: result.url).outcome?.label ?? "Unreviewed",
+                                                  systemImage: session.review(for: result.url).outcome == nil ? "circle" : "checkmark.circle")
+                                                .font(.caption)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                        .tag(SidebarSelection.incoming(result.url))
+                                        .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
                                     }
-                                    .tag(SidebarSelection.incoming(result.url))
-                                    .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
                                 }
                             }
                         }
-                    }
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-                } detail: {
-                    if let result = session.results.first(where: { $0.url == selectedIncoming }) {
-                        ComparisonDetail(result: result, session: session)
-                    } else if let root = session.root {
-                        if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
-                            DuplicateInspection(group: group, root: root).id(group.id)
+                        .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+                    } detail: {
+                        if let result = session.results.first(where: { $0.url == selectedIncoming }) {
+                            ComparisonDetail(result: result, session: session)
+                        } else if let root = session.root {
+                            if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
+                                DuplicateInspection(group: group, root: root).id(group.id)
+                            } else {
+                                ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
+                                                       description: Text("Choose Images to compare incoming images with this project."))
+                            }
                         } else {
-                            ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
-                                                   description: Text("Choose Images to compare incoming images with this project."))
+                            WelcomeView(notice: dropNotice, openProject: pickProject)
                         }
-                    } else {
-                        ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
-                                               description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
                     }
-                }
-                .toolbar {
-                    #if DEBUG
-                        if ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" {
-                            Picker("Fixture data", selection: $stressDataset) {
-                                ForEach(StressDataset.allCases) { dataset in Text(dataset.title).tag(dataset) }
+                    .toolbar {
+                        #if DEBUG
+                            if ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" {
+                                Picker("Fixture data", selection: $stressDataset) {
+                                    ForEach(StressDataset.allCases) { dataset in Text(dataset.title).tag(dataset) }
+                                }
+                                .accessibilityIdentifier("stressDatasetPicker")
+                                .disabled(preparingStress)
                             }
-                            .accessibilityIdentifier("stressDatasetPicker")
-                            .disabled(preparingStress)
+                        #endif
+                        Button("Open Project…", systemImage: "folder") { pickProject() }
+                            .accessibilityIdentifier("openProject")
+                            .keyboardShortcut("o")
+                            .help("Choose a project folder and discover its image assets.")
+                        Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
+                            .accessibilityIdentifier("chooseImages")
+                            .keyboardShortcut("i")
+                            .disabled(session.root == nil)
+                            .help(session.root == nil
+                                ? Text("Open a project folder first.")
+                                : Text("Choose PNG or JPEG images to find exact matches."))
+                        if session.isRunning {
+                            Button("Cancel Search") { session.cancel() }
+                                .help("Stop the search and keep the matches found so far.")
                         }
-                    #endif
-                    Button("Open Project…", systemImage: "folder") { pickProject() }
-                        .accessibilityIdentifier("openProject")
-                        .keyboardShortcut("o")
-                        .help("Choose a project folder and discover its image assets.")
-                    Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
-                        .accessibilityIdentifier("chooseImages")
-                        .keyboardShortcut("i")
-                        .disabled(session.root == nil)
-                        .help(session.root == nil
-                            ? Text("Open a project folder first.")
-                            : Text("Choose PNG or JPEG images to find exact matches."))
-                    if session.isRunning {
-                        Button("Cancel Search") { session.cancel() }
-                            .help("Stop the search and keep the matches found so far.")
                     }
-                }
-                .frame(maxHeight: .infinity)
-                .clipped()
+                    .frame(maxHeight: .infinity)
+                    .clipped()
 
-                VStack(alignment: .leading) {
-                    if let dropNotice {
-                        Text(dropNotice).foregroundStyle(.orange)
+                    VStack(alignment: .leading) {
+                        if let dropNotice {
+                            Text(dropNotice).foregroundStyle(.orange)
+                        }
+                        SessionProgress(session: session)
                     }
-                    SessionProgress(session: session)
+                    .padding()
+                    .background(.bar)
+                    .accessibilityIdentifier("searchFooter")
                 }
-                .padding()
-                .background(.bar)
-                .accessibilityIdentifier("searchFooter")
             }
             // Reapply the measured toolbar inset once, keeping both columns below it.
             .padding(.top, geometry.safeAreaInsets.top)
@@ -407,6 +410,65 @@ private struct SessionProgress: View {
     }
 }
 
+// MARK: - WelcomeView
+
+private struct WelcomeView: View {
+    let notice: String?
+    let openProject: () -> Void
+    private var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 12) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 48, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 96, height: 96)
+                    .background(.blue.gradient, in: RoundedRectangle(cornerRadius: 22))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22)
+                            .strokeBorder(.white.opacity(0.2), lineWidth: 1)
+                    }
+                    .accessibilityHidden(true)
+                VStack(spacing: 4) {
+                    Text("rupick").font(.title2.bold())
+                    Text("Version \(version)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button("Open Project…", action: openProject)
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .keyboardShortcut("o")
+                .accessibilityIdentifier("openProject")
+                .help("Choose a project folder and discover its image assets.")
+            VStack(spacing: 8) {
+                Text("Find matching images").font(.headline)
+                Text("Open a project folder to find exact duplicates in its image assets. Then compare incoming images with the project.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                if let notice {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, minHeight: 180)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .frame(maxWidth: 360)
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 // MARK: - DuplicateInspection
 
 private struct DuplicateInspection: View {
@@ -568,7 +630,7 @@ private struct DuplicateMemberPreview: View {
                 set: { selectedID = $0 }
             )) {
                 ForEach(member.representations) { variant in
-                    Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
+                    Text("\(variant.url.lastPathComponent) · \(variant.label) · \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
                 }
             }.accessibilityIdentifier("duplicateRepresentationPicker")
             if let representation {
@@ -699,7 +761,7 @@ private struct CandidateInspection: View {
                 }
             )) {
                 ForEach(candidate.representations) { variant in
-                    Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
+                    Text("\(variant.url.lastPathComponent) · \(variant.label) · \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
                 }
             }.accessibilityIdentifier("representationPicker")
             if let representation {
