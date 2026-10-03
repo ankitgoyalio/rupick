@@ -165,6 +165,9 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Alternative representation"].waitForExistence(timeout: 5))
         let memberPicker = app.popUpButtons["duplicateMemberPicker"].firstMatch
         memberPicker.click()
+        let assetChoices = app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", ".imageset"))
+        XCTAssertEqual(assetChoices.count, 3, "Each participating asset must appear exactly once")
+        XCTAssertEqual(Set(assetChoices.allElementsBoundByIndex.map(\.title)).count, 3)
         app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Third.imageset")).firstMatch.click()
         XCTAssertTrue(app.staticTexts["copy.png"].firstMatch.waitForExistence(timeout: 5))
         app.buttons["Comparison Details"].click()

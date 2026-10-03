@@ -392,8 +392,10 @@ private struct DuplicateMemberPanel: View {
         let member = members.first { $0.id == selectedID } ?? fallback
         VStack(alignment: .leading) {
             if members.count <= 50 {
-                Picker("Asset", selection: $selectedID) {
-                    Text("\(fallback.name) · \(fallback.location)").tag("")
+                Picker("Asset", selection: Binding(
+                    get: { member.id },
+                    set: { selectedID = $0 }
+                )) {
                     ForEach(members) { candidate in
                         Text("\(candidate.name) · \(candidate.location)").tag(candidate.id)
                     }
