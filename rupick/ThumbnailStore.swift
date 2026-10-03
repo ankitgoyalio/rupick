@@ -21,9 +21,47 @@ struct Thumbnail: Sendable {
 @MainActor @Observable
 final class ThumbnailStore {
     let id = UUID()
-    private let cache = ThumbnailCache()
+    private let cache: ThumbnailCache
+    private let access: FileAccessAdapter
+    private var closed = false
+    private var requests = [UUID: Task<Thumbnail?, Never>]()
+
+    init(access: FileAccessAdapter = .native) {
+        self.access = access
+        cache = ThumbnailCache(access: access)
+    }
+
     func load(url: URL, scope: URL, fullSize: Bool = false) async -> Thumbnail? {
-        await cache.load(url: url, scope: scope, fullSize: fullSize)
+        guard closed == false, Task.isCancelled == false else {
+            return nil
+        }
+
+        let id = UUID()
+        // Hold access while queued for the cache actor as well as during decoding.
+        let lease = FileAccessLease(urls: [scope], adapter: access)
+        let cache = cache
+        let request = Task {
+            defer { lease.release() }
+            return await cache.load(url: url, scope: scope, fullSize: fullSize)
+        }
+        requests[id] = request
+        let result = await withTaskCancellationHandler { await request.value } onCancel: { request.cancel() }
+        requests[id] = nil
+        return closed || Task.isCancelled ? nil : result
+    }
+
+    @discardableResult
+    func close() -> Task<Void, Never> {
+        closed = true
+        let retiring = Array(requests.values)
+        retiring.forEach { $0.cancel() }
+        let cache = cache
+        return Task {
+            for request in retiring {
+                _ = await request.value
+            }
+            await cache.close()
+        }
     }
 }
 
@@ -37,22 +75,29 @@ actor ThumbnailCache {
         let fullSize: Bool
     }
 
+    private let access: FileAccessAdapter
+    private var closed = false
     private var values = [Key: Thumbnail]()
     private var order = [Key]()
     private var cost = 0
     private let limit = 32 * 1024 * 1024
 
+    init(access: FileAccessAdapter = .native) {
+        self.access = access
+    }
+
+    func close() {
+        closed = true
+        values = [:]; order = []; cost = 0
+    }
+
     func load(url: URL, scope: URL, fullSize: Bool) -> Thumbnail? {
-        guard Task.isCancelled == false else {
+        guard closed == false, Task.isCancelled == false else {
             return nil
         }
 
-        let acquired = scope.startAccessingSecurityScopedResource()
-        defer {
-            if acquired {
-                scope.stopAccessingSecurityScopedResource()
-            }
-        }
+        let lease = FileAccessLease(urls: [scope], adapter: access)
+        defer { lease.release() }
         var freshURL = url
         freshURL.removeAllCachedResourceValues()
         let attributes = try? freshURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])

@@ -20,6 +20,10 @@ final class rupickUITests: XCTestCase {
             let button = app.buttons["openProject"]
             XCTAssertTrue(button.waitForExistence(timeout: 10))
             XCTAssertTrue(button.isHittable)
+            let welcomeFrame = app.windows.firstMatch.frame
+            XCTAssertEqual(welcomeFrame.width, 480, accuracy: 2)
+            XCTAssertGreaterThanOrEqual(welcomeFrame.height, 600)
+            XCTAssertLessThan(welcomeFrame.height, 650)
             XCTAssertTrue(app.staticTexts["Find matching images"].exists)
             XCTAssertFalse(app.staticTexts["projectHeading"].exists)
             XCTAssertFalse(app.descendants(matching: .any)["searchFooter"].exists)
@@ -36,6 +40,17 @@ final class rupickUITests: XCTestCase {
             app.typeKey("o", modifierFlags: .command)
             XCTAssertTrue(cancel.waitForExistence(timeout: 5))
             cancel.click()
+            XCTAssertEqual(app.windows.firstMatch.frame.width, welcomeFrame.width, accuracy: 2)
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-welcome-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            do { try copyFixture(to: root) } catch { XCTFail("Could not prepare project: \(error)"); return }
+            button.click()
+            choose(root.path, in: app)
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+            let workspaceFrame = app.windows.firstMatch.frame
+            XCTAssertGreaterThanOrEqual(workspaceFrame.width, 950)
+            XCTAssertGreaterThanOrEqual(workspaceFrame.height, 620)
+            XCTAssertTrue(app.buttons["chooseImages"].isHittable)
             app.terminate()
         }
     }
@@ -152,6 +167,7 @@ final class rupickUITests: XCTestCase {
 
         app.buttons["chooseImages"].click()
         choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        selectIncoming("renamed.png", in: app)
         XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         let comparison = app.scrollViews["comparisonScrollView"]
@@ -262,9 +278,57 @@ final class rupickUITests: XCTestCase {
         XCTAssertEqual(app.sliders.matching(identifier: "Preview zoom").count, 1)
         app.buttons["chooseImages"].click()
         choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        selectIncoming("renamed.png", in: app)
         XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.waitForExistence(timeout: 30))
         app.staticTexts["2 assets with equal content"].click()
         XCTAssertTrue(app.staticTexts["Exact duplicate content"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testAddingImagesPreservesInspectionAndReopeningSameProjectStartsFresh() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-lifecycle-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try copyFixture(to: root)
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let picker = app.popUpButtons["duplicateRepresentationPicker"].firstMatch
+        picker.click()
+        app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Alternative")).firstMatch.click()
+        XCTAssertTrue(app.staticTexts["Alternative representation"].waitForExistence(timeout: 5))
+        app.buttons["chooseImages"].click()
+        choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["incoming-renamed.png"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+        XCTAssertTrue(app.staticTexts["Alternative representation"].exists)
+        // Removing the inspected alternative during a refresh falls back to the exact match.
+        let metadata = root.appendingPathComponent("App/Primary.xcassets/Icon.imageset/Contents.json")
+        let originalMetadata = try Data(contentsOf: metadata)
+        try Data(#"{"images":[{"filename":"light.png","scale":"1x"}]}"#.utf8).write(to: metadata)
+        app.buttons["chooseImages"].click()
+        choose(root.appendingPathComponent("Incoming/new.png").path, in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["incoming-new.png"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+        XCTAssertFalse(app.staticTexts["Alternative representation"].exists)
+        // Restoring the alternative must not resurrect the discarded selection.
+        try originalMetadata.write(to: metadata)
+        app.buttons["chooseImages"].click()
+        choose(root.appendingPathComponent("Incoming/hidden-colour.png").path, in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["incoming-hidden-colour.png"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.staticTexts["Alternative representation"].exists)
+        selectIncoming("renamed.png", in: app)
+        XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.descendants(matching: .any)["incoming-renamed.png"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+        XCTAssertFalse(app.staticTexts["Alternative representation"].exists)
     }
 
     @MainActor
@@ -321,6 +385,7 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         app.buttons["chooseImages"].click()
         choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        selectIncoming("renamed.png", in: app)
         XCTAssertTrue(app.staticTexts["Incomplete search · 2 matches so far"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["App/Primary.xcassets/Icon.imageset"].exists)
         app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: -10000)
@@ -445,6 +510,7 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         app.buttons["chooseImages"].click()
         choose(root.appendingPathComponent("Incoming/new.png").path, in: app)
+        selectIncoming("new.png", in: app)
         XCTAssertTrue(app.staticTexts["No matches found"].firstMatch.waitForExistence(timeout: 30))
         app.buttons["Comparison Details"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "does not guarantee")).firstMatch.exists)
@@ -452,6 +518,7 @@ final class rupickUITests: XCTestCase {
         try FileManager.default.removeItem(at: root)
         app.buttons["chooseImages"].click()
         choose(input.path, in: app)
+        selectIncoming(input.lastPathComponent, in: app)
         XCTAssertTrue(app.staticTexts["Search failed"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search failed. Open the project folder again to retry."].exists)
         XCTAssertFalse(app.staticTexts["No matches found"].exists)
@@ -595,11 +662,13 @@ final class rupickUITests: XCTestCase {
         } else {
             app.buttons["chooseImages"].click()
             choose(config.duplicate, in: app)
+            selectIncoming(URL(fileURLWithPath: config.duplicate).lastPathComponent, in: app)
             XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 600))
             XCTAssertTrue(app.popUpButtons["representationPicker"].firstMatch.exists)
             XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
             app.typeKey("i", modifierFlags: .command)
             choose(config.newImage, in: app)
+            selectIncoming(URL(fileURLWithPath: config.newImage).lastPathComponent, in: app)
             XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
         }
         app.descendants(matching: .any).matching(identifier: "incoming-" + URL(fileURLWithPath: config.newImage).lastPathComponent).firstMatch.click()

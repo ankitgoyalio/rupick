@@ -8,13 +8,14 @@ The agreed seams are the observable `ProjectSession` and the running native macO
 python3 scripts/make-fixtures.py fixtures/ExactMatching
 ```
 
-For manual native acceptance, run Rupick, use **Open Project…** to select the fixture root, and use **Choose Images…** for the Incoming files. Renamed and hidden-colour images each yield two distinct Icon entries; the remaining valid inputs yield no matches, and broken.png shows an error. Inspect the incoming and candidate images side by side, select the 2x dark alternative, and verify it is labelled Alternative. Check that the incomplete-scan notice remains visible for the broken catalog, and that the exact-only limitation appears at the bottom.
+For manual native acceptance, run Rupick, use **Open Project…** to select the fixture root, and use **Choose Images…** for the Incoming files. Renamed and hidden-colour images each yield two distinct Icon entries; the remaining valid inputs yield no matches, and broken.png shows an error. Select an incoming image in the sidebar, inspect it and the candidate images side by side, select the 2x dark alternative, and verify it is labelled Alternative. Check that the incomplete-scan notice remains visible for the broken catalog, and that the exact-only limitation appears at the bottom.
 
 For a larger project, use a renamed copy of a known catalog PNG or JPEG and a known new PNG or JPEG, keeping these copies outside the project. Compile and run the **same session implementation** through the local validation executable:
 
 ```sh
 swiftc -swift-version 6 -parse-as-library \
-  rupick/ProjectSession.swift rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift \
+  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ThumbnailStore.swift \
+  rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift \
   scripts/validate-project.swift -o /tmp/rupick-validate
 /tmp/rupick-validate /path/to/project /path/to/duplicate.png /path/to/new.png
 ```
@@ -69,9 +70,15 @@ Large duplicate groups use a searchable asset chooser instead of unbounded pop-u
 
 Thumbnail decoding is serialized off the main actor and cached per window with limits of 128 entries and 32 MiB of decoded pixels. Cache keys refresh file modification time and size before lookup. Actual-size decoding obeys the comparison engine's 16-megapixel and 8,192-pixel-side limits. Routine progress snapshots are coalesced to at most ten updates per second, while phase changes, first matches, errors, and final results publish immediately. Each comparison refresh rereads the catalog; inspected results are explicitly provisional until replaced by the completed scan, so no persistent comparison index requires invalidation.
 
+## Project lifecycle
+
+`ProjectLifecycleTests` exercises the project interface with controlled scan completion and recorded file access. It covers fresh same-folder openings, obsolete picker/drop/scan callbacks, submission and file order, duplicate intake, mixed rejection, abandoned batches, cancellation with pending intake, inspection fallback, partial refresh retention, independent windows, and balanced access after retiring work. Native regression coverage verifies retained duplicate inspection, removed representation fallback, and a fresh opening through actual file panels.
+
+Cancel Search retains accepted incoming images and provisional inspection while marking results incomplete. It discards unfinished intake, so late provider callbacks cannot restart the scan. A later picker selection or drop can start comparison again. Project closure invalidates callbacks immediately and lets workers and previews release their own access before removing generated fixture files.
+
 ## Review outcomes (#6)
 
-Use the incoming-image review card to record **Keep as New**, including when candidates exist. Choose an exact matching representation on a candidate and select **Reuse This Asset** to record that catalog-entry identity, location, and matching image file. Alternatives remain inspectable but cannot be recorded as matching reuse. Review controls become available when the search stops; provisional results are still visible during scanning. The sidebar shows reviewed/unreviewed state and the footer counts reviewed incoming images. Navigate away and back to verify the outcome and inspected representation remain selected. Adding incoming images rescans the project while retaining decisions; opening a different project resets them. Decisions are session-only and never modify project files.
+Use the incoming-image review card to record **Keep as New**, including when candidates exist. Choose an exact matching representation on a candidate and select **Reuse This Asset** to record that catalog-entry identity, location, and matching image file. Alternatives remain inspectable but cannot be recorded as matching reuse. Review controls become available when the search stops; provisional results are still visible during scanning. The sidebar shows reviewed/unreviewed state and the footer counts reviewed incoming images. Navigate away and back to verify the outcome and inspected representation remain selected. Adding incoming images rescans the project while retaining decisions; opening a project resets them. Decisions are session-only and never modify project files.
 
 Native acceptance exercises both outcomes, keeping as new with candidates, alternative rejection, representation selection retention, and navigation back to a recorded decision. The optional local-project native test exercises the same review flow. ProjectSession coverage verifies catalog identity, matching representation, independent per-image decisions, rescan retention, project reset, invalid identities, and byte-for-byte unchanged fixture contents. The local validation executable also verifies both outcomes, rescan retention, preserved candidates, and unchanged catalog-file hashes.
 
@@ -93,7 +100,7 @@ Stress validation also exposed a resize feedback loop when an inspection's lazil
 
 ## Welcome screen
 
-With no project selected, the window shows a centered app mark, app name and version, a native Open Project button, and a rounded guidance card. The sidebar, comparison counters, and incoming-image controls appear after choosing a project. Native acceptance checks Light and Dark appearances, opening and cancelling the folder picker by click and Command-O, and transition into the existing project inspection flow. The welcome, native picker/representation, and scroll-layout tests passed after this change.
+With no project selected, the window uses a compact 480 × 600-point content area (480 × 632 including the title bar on the validation system) and shows a centered app mark, app name and version, a native Open Project button, and a rounded guidance card. Opening a project expands the window to the 950 × 620-point minimum workspace, which remains resizable. The sidebar, comparison counters, and incoming-image controls appear after choosing a project. Native acceptance checks compact sizing in Light and Dark appearances, opening and cancelling the folder picker by click and Command-O, automatic workspace expansion, and transition into the existing project inspection flow. The welcome, native picker/representation, and scroll-layout tests passed after this change.
 
 ![Welcome screen in Light appearance](images/welcome-light.png)
 
