@@ -288,6 +288,7 @@ final class ProjectSession {
         @discardableResult
         func openFixture(root: URL, incoming: [URL] = []) -> Task<Void, Never> {
             let work = open(root: root, incoming: incoming)
+            selection = nil
             temporaryRoot = root
             return work
         }
