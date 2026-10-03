@@ -482,6 +482,9 @@ private struct DuplicateMemberPanel: View {
             if members.count == 2 {
                 Text(member.name)
                     .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(member.name)
                     .textSelection(.enabled)
             } else if members.count <= 50 {
                 Picker("Asset", selection: Binding(
@@ -491,7 +494,9 @@ private struct DuplicateMemberPanel: View {
                     ForEach(members) { candidate in
                         Text("\(candidate.name) · \(candidate.location)").tag(candidate.id)
                     }
-                }.accessibilityIdentifier("duplicateMemberPicker")
+                }
+                .help(member.name)
+                .accessibilityIdentifier("duplicateMemberPicker")
             } else {
                 Button {
                     pendingMemberID = member.id
@@ -504,7 +509,7 @@ private struct DuplicateMemberPanel: View {
                 }
                 .accessibilityLabel("Choose asset")
                 .accessibilityValue(member.name)
-                .help(member.location)
+                .help(member.name)
                 .sheet(isPresented: $choosingMember) {
                     VStack {
                         Text("Choose an asset").font(.headline)
@@ -536,6 +541,9 @@ private struct DuplicateMemberPanel: View {
             Text(member.location)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(member.location)
                 .textSelection(.enabled)
             DuplicateMemberPreview(member: member, root: root, previewOptions: previewOptions).id(member.id)
         }.frame(maxWidth: .infinity)
@@ -673,8 +681,18 @@ private struct CandidateInspection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(candidate.name).font(.headline)
-            Text(candidate.location).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            Text(candidate.name)
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(candidate.name)
+            Text(candidate.location)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(candidate.location)
+                .textSelection(.enabled)
             Picker("Representation", selection: Binding(
                 get: { representation?.id ?? "" }, set: {
                     session.selectRepresentation(for: incoming, candidateID: candidate.id, representationID: $0)
