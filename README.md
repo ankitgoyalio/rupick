@@ -14,4 +14,20 @@ Run the tests:
 xcodebuild test -scheme rupick -destination 'platform=macOS' -derivedDataPath /tmp/rupick-build
 ```
 
+Format Swift sources before submitting changes:
+
+```sh
+./scripts/format.sh
+```
+
+Check formatting without changing files:
+
+```sh
+./scripts/lint-format.sh
+```
+
+Both commands work from any directory and use SwiftFormat 0.63.1, pinned in the separate `BuildTools` package. The first run downloads and builds the formatter; subsequent runs reuse the local build. The root `.swiftformat` config applies to the app, tests, and Swift scripts, and excludes the tools package and generated package output. GitHub Actions runs the same check on pull requests and pushes to `main`. Formatting runs explicitly, outside the Xcode build.
+
+The scripts select the repository config explicitly so personal formatter settings cannot affect the result. The `preferKeyPath` rule is disabled because converting closure predicates inside Swift Testing macros can cause compilation errors.
+
 The native UI tests exercise mixed PNG/JPEG batches through multiple selection and Finder drops, isolate decoding failures, navigate the incoming list, and retain incomplete-scan status. They drive the real folder and image panels, checks same-named entries in different catalogs, verifies side-by-side previews, and selects a dark scale alternative. Project-session tests cover pixel, transparency, JPEG, orientation, boundary, error, cancellation, and provisional-result behavior. See [acceptance validation](docs/acceptance.md) for repeatable fixtures and optional local project checks.
