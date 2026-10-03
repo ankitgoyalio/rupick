@@ -49,7 +49,11 @@ final class rupickUITests: XCTestCase {
                     XCTAssertTrue(row.waitForExistence(timeout: 5))
                     row.click()
                     app.sheets.firstMatch.buttons["Choose"].click()
-                    XCTAssertTrue(app.staticTexts["Image999"].firstMatch.waitForExistence(timeout: 5))
+                    let selectedAsset = XCTNSPredicateExpectation(
+                        predicate: NSPredicate(format: "value == %@", "Image999"),
+                        object: app.buttons["Choose asset"].firstMatch
+                    )
+                    XCTAssertEqual(XCTWaiter.wait(for: [selectedAsset], timeout: 5), .completed)
                 }
             }
             let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
@@ -175,6 +179,19 @@ final class rupickUITests: XCTestCase {
         app.buttons["Comparison Details"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "safe to delete")).firstMatch.exists)
         app.typeKey(.escape, modifierFlags: [])
+        app.staticTexts["2 assets with equal content"].click()
+        XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateMemberPicker").count, 0)
+        XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateRepresentationPicker").count, 2)
+        XCTAssertFalse(app.buttons["projectDuplicates"].exists)
+        XCTAssertFalse(app.staticTexts["Matching representation"].exists)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "Actual Size").count, 1)
+        app.descendants(matching: .any)["Actual Size"].click()
+        XCTAssertEqual(app.sliders.matching(identifier: "Preview zoom").count, 1)
+        app.buttons["chooseImages"].click()
+        choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.waitForExistence(timeout: 30))
+        app.staticTexts["2 assets with equal content"].click()
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -215,7 +232,7 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Search cancelled. Results are incomplete."].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
         XCTAssertFalse(app.staticTexts["No exact duplicates found"].exists)
-        XCTAssertTrue(app.popUpButtons["duplicateMemberPicker"].firstMatch.exists)
+        XCTAssertTrue(app.popUpButtons["duplicateRepresentationPicker"].firstMatch.exists)
     }
 
     @MainActor
@@ -292,8 +309,6 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Search failed"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search failed. Open the project folder again to retry."].exists)
         XCTAssertFalse(app.staticTexts["No matches found"].exists)
-        app.buttons["projectDuplicates"].click()
-        XCTAssertTrue(app.staticTexts["Duplicate scan failed"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["No exact duplicates found"].exists)
     }
 
@@ -401,7 +416,6 @@ final class rupickUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts[expectedGroups == 1 ? "1 exact duplicate group" : "\(expectedGroups) exact duplicate groups"].exists)
             if expectedGroups > 0 {
                 XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
-                XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateMemberPicker").count, 2)
                 XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateRepresentationPicker").count, 2)
             }
         }

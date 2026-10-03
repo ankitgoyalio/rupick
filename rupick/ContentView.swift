@@ -33,9 +33,6 @@ struct ContentView: View {
                             .truncationMode(.middle)
                             .help(session.root?.path ?? "Choose a project folder")
                             .accessibilityIdentifier("projectHeading")
-                        Button("Project Duplicates") { selectedIncoming = nil }
-                            .accessibilityIdentifier("projectDuplicates")
-                            .padding(.horizontal)
                         List(selection: sidebarSelection) {
                             Section("Project Duplicates") {
                                 ForEach(session.duplicateGroups) { group in
@@ -399,14 +396,16 @@ private struct DuplicateInspection: View {
     let root: URL
     @State private var leftID = ""
     @State private var rightID = ""
+    @State private var previewOptions = PreviewOptions()
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 DuplicateHeader(memberCount: group.members.count)
+                PreviewControls(options: $previewOptions)
                 HStack(alignment: .top) {
-                    DuplicateMemberPanel(members: group.members, root: root, selectedID: $leftID, fallback: group.members[0])
-                    DuplicateMemberPanel(members: group.members, root: root, selectedID: $rightID, fallback: group.members[1])
+                    DuplicateMemberPanel(members: group.members, root: root, selectedID: $leftID, fallback: group.members[0], previewOptions: previewOptions)
+                    DuplicateMemberPanel(members: group.members, root: root, selectedID: $rightID, fallback: group.members[1], previewOptions: previewOptions)
                 }
                 Text("Participating assets").font(.headline)
                 ForEach(group.members) { member in DuplicateParticipant(member: member) }
@@ -453,13 +452,18 @@ private struct DuplicateMemberPanel: View {
     let root: URL
     @Binding var selectedID: String
     let fallback: AssetCandidate
+    let previewOptions: PreviewOptions
     @State private var choosingMember = false
     @State private var query = ""
     @State private var pendingMemberID: String?
     var body: some View {
         let member = members.first { $0.id == selectedID } ?? fallback
         VStack(alignment: .leading) {
-            if members.count <= 50 {
+            if members.count == 2 {
+                Text(member.name)
+                    .font(.headline)
+                    .textSelection(.enabled)
+            } else if members.count <= 50 {
                 Picker("Asset", selection: Binding(
                     get: { member.id },
                     set: { selectedID = $0 }
@@ -479,6 +483,7 @@ private struct DuplicateMemberPanel: View {
                         .truncationMode(.middle)
                 }
                 .accessibilityLabel("Choose asset")
+                .accessibilityValue(member.name)
                 .help(member.location)
                 .sheet(isPresented: $choosingMember) {
                     VStack {
@@ -508,7 +513,11 @@ private struct DuplicateMemberPanel: View {
                     .frame(minWidth: 500, minHeight: 400)
                 }
             }
-            DuplicateMemberPreview(member: member, root: root).id(member.id)
+            Text(member.location)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            DuplicateMemberPreview(member: member, root: root, previewOptions: previewOptions).id(member.id)
         }.frame(maxWidth: .infinity)
     }
 }
@@ -518,6 +527,7 @@ private struct DuplicateMemberPanel: View {
 private struct DuplicateMemberPreview: View {
     let member: AssetCandidate
     let root: URL
+    let previewOptions: PreviewOptions
     @State private var selectedID = ""
     private var representation: Representation? {
         member.representations.first { $0.id == selectedID } ?? member.representations.first(where: \.matches)
@@ -525,17 +535,18 @@ private struct DuplicateMemberPreview: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            Text(member.name).font(.headline)
-            Text(member.location).font(.caption).textSelection(.enabled)
-            Picker("Representation", selection: $selectedID) {
-                Text("Matching representation").tag("")
+            Picker("Image file", selection: Binding(
+                get: { representation?.id ?? "" },
+                set: { selectedID = $0 }
+            )) {
                 ForEach(member.representations) { variant in
                     Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
                 }
             }.accessibilityIdentifier("duplicateRepresentationPicker")
             if let representation {
                 ImagePreview(url: representation.url,
-                             title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
+                             title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root,
+                             sharedOptions: previewOptions)
             }
         }
     }
@@ -607,18 +618,70 @@ private struct CandidateInspection: View {
     }
 }
 
+// MARK: - PreviewOptions
+
+private struct PreviewOptions {
+    var background = PreviewBackground.checkerboard
+    var actualSize = false
+    var zoom: Double = 1
+}
+
+// MARK: - PreviewControls
+
+private struct PreviewControls: View {
+    @Binding var options: PreviewOptions
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                backgroundPicker
+                sizeControls
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                backgroundPicker
+                sizeControls
+            }
+        }
+    }
+
+    private var backgroundPicker: some View {
+        Picker("Background", selection: $options.background) {
+            ForEach(PreviewBackground.allCases) { style in Text(style.title).tag(style) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel("Preview background")
+        .frame(width: 180)
+    }
+
+    private var sizeControls: some View {
+        HStack {
+            Toggle("Actual Size", isOn: $options.actualSize)
+                .toggleStyle(.button)
+                .help("Inspect one image pixel per display pixel; zoom up to 4×.")
+            if options.actualSize {
+                Slider(value: $options.zoom, in: 1 ... 4, step: 0.25)
+                    .accessibilityLabel("Preview zoom")
+                    .frame(width: 120)
+                Text(options.zoom, format: .number.precision(.fractionLength(2)))
+                    .monospacedDigit()
+                    .font(.caption)
+            }
+        }
+    }
+}
+
 // MARK: - ImagePreview
 
 private struct ImagePreview: View {
     let url: URL
     let title: String
     var accessURL: URL?
+    var sharedOptions: PreviewOptions?
     @Environment(ThumbnailStore.self) private var thumbnails
     @State private var loaded: Thumbnail?
     @State private var failedURL: URL?
-    @State private var background = PreviewBackground.checkerboard
-    @State private var actualSize = false
-    @State private var zoom: Double = 1
+    @State private var localOptions = PreviewOptions()
     @Environment(\.displayScale) private var displayScale
 
     private struct PreviewRequest: Hashable {
@@ -628,24 +691,14 @@ private struct ImagePreview: View {
     }
 
     var body: some View {
+        let options = sharedOptions ?? localOptions
+        let background = options.background
+        let actualSize = options.actualSize
+        let zoom = options.zoom
         VStack(spacing: 8) {
             Text(title).font(.subheadline)
-            VStack(spacing: 6) {
-                Picker("Background", selection: $background) {
-                    ForEach(PreviewBackground.allCases) { style in Text(style.title).tag(style) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .accessibilityLabel("Preview background")
-                HStack {
-                    Toggle("Actual Size", isOn: $actualSize)
-                        .toggleStyle(.button)
-                        .help("Inspect one image pixel per display pixel; zoom up to 4×.")
-                    if actualSize {
-                        Slider(value: $zoom, in: 1 ... 4, step: 0.25).accessibilityLabel("Preview zoom")
-                        Text(zoom, format: .number.precision(.fractionLength(2))).monospacedDigit().font(.caption)
-                    }
-                }
+            if sharedOptions == nil {
+                PreviewControls(options: $localOptions)
             }
             ZStack {
                 PreviewBackdrop(style: background)
