@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
@@ -14,9 +14,9 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     #if DEBUG
-    @State private var stressDataset: StressDataset = .demo
-    @State private var stressRoot: URL?
-    @State private var preparingStress = false
+        @State private var stressDataset: StressDataset = .demo
+        @State private var stressRoot: URL?
+        @State private var preparingStress = false
     #endif
 
     var body: some View {
@@ -37,7 +37,7 @@ struct ContentView: View {
                                     VStack(alignment: .leading) {
                                         Text("\(group.members.count) assets with equal content")
                                         Text(group.members.prefix(2).map(\.name).joined(separator: ", ") +
-                                             (group.members.count > 2 ? " +\(group.members.count - 2) more" : ""))
+                                            (group.members.count > 2 ? " +\(group.members.count - 2) more" : ""))
                                             .font(.caption).foregroundStyle(.secondary)
                                             .lineLimit(1).truncationMode(.middle)
                                     }.tag(SidebarSelection.group(group.id)).accessibilityIdentifier("duplicateGroup")
@@ -66,20 +66,20 @@ struct ContentView: View {
                             DuplicateInspection(group: group, root: root).id(group.id)
                         } else {
                             ContentUnavailableView(duplicateStatus, systemImage: "photo.on.rectangle.angled",
-                                description: Text("Choose Images to compare incoming images with this project."))
+                                                   description: Text("Choose Images to compare incoming images with this project."))
                         }
                     } else {
                         ContentUnavailableView("Find an existing image", systemImage: "photo.on.rectangle.angled",
-                            description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
+                                               description: Text("Choose a project folder to find exact duplicates among its image assets, or choose or drop incoming PNG or JPEG images to compare."))
                     }
                 }
                 .toolbar {
                     #if DEBUG
-                    if ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" {
-                        Picker("Fixture data", selection: $stressDataset) {
-                            ForEach(StressDataset.allCases) { dataset in Text(dataset.title).tag(dataset) }
-                        }.accessibilityIdentifier("stressDatasetPicker").disabled(preparingStress)
-                    }
+                        if ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" {
+                            Picker("Fixture data", selection: $stressDataset) {
+                                ForEach(StressDataset.allCases) { dataset in Text(dataset.title).tag(dataset) }
+                            }.accessibilityIdentifier("stressDatasetPicker").disabled(preparingStress)
+                        }
                     #endif
                     Button("Open Project…", systemImage: "folder") { pickProject() }
                         .accessibilityIdentifier("openProject").keyboardShortcut("o")
@@ -88,8 +88,8 @@ struct ContentView: View {
                         .accessibilityIdentifier("chooseImages").keyboardShortcut("i")
                         .disabled(session.root == nil)
                         .help(session.root == nil
-                              ? Text("Open a project folder first.")
-                              : Text("Choose PNG or JPEG images to find exact matches."))
+                            ? Text("Open a project folder first.")
+                            : Text("Choose PNG or JPEG images to find exact matches."))
                     if session.isRunning {
                         Button("Cancel Search") { session.cancel() }
                             .help("Stop the search and keep the matches found so far.")
@@ -99,7 +99,9 @@ struct ContentView: View {
                 .clipped()
 
                 VStack(alignment: .leading) {
-                    if let dropNotice { Text(dropNotice).foregroundStyle(.orange) }
+                    if let dropNotice {
+                        Text(dropNotice).foregroundStyle(.orange)
+                    }
                     SessionProgress(session: session)
                 }.padding().background(.bar)
                     .accessibilityIdentifier("searchFooter")
@@ -117,39 +119,47 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted, perform: acceptDrop)
         .environment(thumbnails)
         .onChange(of: session.duplicateGroups.map(\.id)) { _, ids in
-            if let selectedGroup, !ids.contains(selectedGroup) { self.selectedGroup = ids.first }
+            if let selectedGroup, !ids.contains(selectedGroup) {
+                self.selectedGroup = ids.first
+            }
         }
         .frame(minWidth: 950, minHeight: 620)
         #if DEBUG
-        .task(id: stressDataset) {
-            guard ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" else { return }
-            preparingStress = true
-            defer { preparingStress = false }
-            let dataset = stressDataset
-            let task = Task.detached(priority: .utility) { try dataset.makeProject() }
-            do {
-                let root = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-                guard !Task.isCancelled else { try? FileManager.default.removeItem(at: root); return }
+            .task(id: stressDataset) {
+                guard ProcessInfo.processInfo.environment["RUPICK_STRESS_UI"] == "1" else { return }
+                preparingStress = true
+                defer { preparingStress = false }
+                let dataset = stressDataset
+                let task = Task.detached(priority: .utility) { try dataset.makeProject() }
+                do {
+                    let root = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+                    guard !Task.isCancelled else { try? FileManager.default.removeItem(at: root); return }
+                    session.cancel()
+                    releaseAccess()
+                    if let stressRoot {
+                        try? FileManager.default.removeItem(at: stressRoot)
+                    }
+                    stressRoot = root
+                    thumbnails = ThumbnailStore()
+                    selectedIncoming = nil; selectedGroup = nil; dropNotice = nil
+                    session.start(root: root, incoming: [])
+                } catch {
+                    if !Task.isCancelled {
+                        dropNotice = "Could not prepare fixture data."
+                    }
+                }
+            }
+        #endif
+            .onDisappear {
                 session.cancel()
                 releaseAccess()
-                if let stressRoot { try? FileManager.default.removeItem(at: stressRoot) }
-                stressRoot = root
                 thumbnails = ThumbnailStore()
-                selectedIncoming = nil; selectedGroup = nil; dropNotice = nil
-                session.start(root: root, incoming: [])
-            } catch {
-                if !Task.isCancelled { dropNotice = "Could not prepare fixture data." }
+                #if DEBUG
+                    if let stressRoot {
+                        try? FileManager.default.removeItem(at: stressRoot)
+                    }
+                #endif
             }
-        }
-        #endif
-        .onDisappear {
-            session.cancel()
-            releaseAccess()
-            thumbnails = ThumbnailStore()
-            #if DEBUG
-            if let stressRoot { try? FileManager.default.removeItem(at: stressRoot) }
-            #endif
-        }
     }
 
     private enum SidebarSelection: Hashable {
@@ -159,22 +169,32 @@ struct ContentView: View {
 
     private var sidebarSelection: Binding<SidebarSelection?> {
         Binding(get: {
-            if let selectedIncoming { return .incoming(selectedIncoming) }
-            if let id = selectedGroup ?? session.duplicateGroups.first?.id { return .group(id) }
+            if let selectedIncoming {
+                return .incoming(selectedIncoming)
+            }
+            if let id = selectedGroup ?? session.duplicateGroups.first?.id {
+                return .group(id)
+            }
             return nil
         }, set: { selection in
             switch selection {
-            case .group(let id): selectedGroup = id; selectedIncoming = nil
-            case .incoming(let url): selectedIncoming = url
+            case let .group(id): selectedGroup = id; selectedIncoming = nil
+            case let .incoming(url): selectedIncoming = url
             case nil: break
             }
         })
     }
 
     private var duplicateStatus: String {
-        if session.isRunning { return "Looking for exact duplicates…" }
-        if session.state == .failed { return "Duplicate scan failed" }
-        if session.isIncomplete { return "Incomplete scan · no exact duplicates found so far" }
+        if session.isRunning {
+            return "Looking for exact duplicates…"
+        }
+        if session.state == .failed {
+            return "Duplicate scan failed"
+        }
+        if session.isIncomplete {
+            return "Incomplete scan · no exact duplicates found so far"
+        }
         return "No exact duplicates found"
     }
 
@@ -189,7 +209,9 @@ struct ContentView: View {
             session.cancel()
             releaseAccess()
             thumbnails = ThumbnailStore()
-            if url.startAccessingSecurityScopedResource() { projectAccess = url }
+            if url.startAccessingSecurityScopedResource() {
+                projectAccess = url
+            }
             selectedIncoming = nil
             selectedGroup = nil
             dropNotice = nil
@@ -215,15 +237,21 @@ struct ContentView: View {
             guard url.isFileURL, let type = UTType(filenameExtension: url.pathExtension) else { return false }
             return type.conforms(to: .png) || type.conforms(to: .jpeg)
         }
-        if images.count != urls.count { dropNotice = "Some files were not added. Choose PNG or JPEG files." }
+        if images.count != urls.count {
+            dropNotice = "Some files were not added. Choose PNG or JPEG files."
+        }
         let existing = session.results.map(\.url)
         var seen = Set(existing)
         let added = images.filter { seen.insert($0).inserted }
         guard !added.isEmpty else { return }
-        for url in added where url.startAccessingSecurityScopedResource() { incomingAccess.append(url) }
+        for url in added where url.startAccessingSecurityScopedResource() {
+            incomingAccess.append(url)
+        }
         thumbnails = ThumbnailStore()
         session.start(root: root, incoming: existing + added)
-        if selectedIncoming == nil { selectedIncoming = added.first }
+        if selectedIncoming == nil {
+            selectedIncoming = added.first
+        }
     }
 
     private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -235,7 +263,9 @@ struct ContentView: View {
         let root = session.root
         let batch = IncomingDropBatch(count: providers.count) { urls in
             guard session.root == root else { return }
-            if urls.count != providers.count { dropNotice = "Some dropped files could not be opened. Use Choose Images to try again." }
+            if urls.count != providers.count {
+                dropNotice = "Some dropped files could not be opened. Use Choose Images to try again."
+            }
             addImages(urls)
         }
         for (index, provider) in providers.enumerated() {
@@ -285,11 +315,15 @@ private struct SessionProgress: View {
             if session.isRunning {
                 if session.discovered > 0 {
                     ProgressView(value: Double(session.compared), total: Double(session.discovered))
-                } else { ProgressView().controlSize(.small) }
+                } else {
+                    ProgressView().controlSize(.small)
+                }
                 Text("Results are provisional · \(session.decoded, format: .number) / \(session.results.count, format: .number) incoming images processed")
                     .font(.caption).monospacedDigit()
             }
-            if let error = session.error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+            if let error = session.error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+            }
             if session.skipped > 0 {
                 Text("Incomplete scan: \(session.skipped) unreadable or unsupported catalog entries or images were skipped.")
                     .foregroundStyle(.orange).font(.caption)
@@ -318,7 +352,6 @@ private struct DuplicateInspection: View {
         }
         .accessibilityIdentifier("duplicateScrollView")
     }
-
 }
 
 private struct DuplicateHeader: View {
@@ -400,6 +433,7 @@ private struct DuplicateMemberPreview: View {
     private var representation: Representation? {
         member.representations.first { $0.id == selectedID } ?? member.representations.first(where: \.matches)
     }
+
     var body: some View {
         VStack(alignment: .leading) {
             Text(member.name).font(.headline)
@@ -412,7 +446,7 @@ private struct DuplicateMemberPreview: View {
             }.accessibilityIdentifier("duplicateRepresentationPicker")
             if let representation {
                 ImagePreview(url: representation.url,
-                    title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
+                             title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
             }
         }
     }
@@ -455,14 +489,16 @@ private struct CandidateInspection: View {
     @State private var selectedRepresentation: String?
     private var representation: Representation? {
         candidate.representations.first(where: { $0.id == selectedRepresentation }) ??
-        candidate.representations.first(where: \.matches)
+            candidate.representations.first(where: \.matches)
     }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(candidate.name).font(.headline)
             Text(candidate.location).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             Picker("Representation", selection: Binding(
-                get: { representation?.id ?? "" }, set: { selectedRepresentation = $0 })) {
+                get: { representation?.id ?? "" }, set: { selectedRepresentation = $0 }
+            )) {
                 ForEach(candidate.representations) { variant in
                     Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
                 }
@@ -479,7 +515,7 @@ private struct CandidateInspection: View {
 private struct ImagePreview: View {
     let url: URL
     let title: String
-    var accessURL: URL? = nil
+    var accessURL: URL?
     @Environment(ThumbnailStore.self) private var thumbnails
     @State private var loaded: Thumbnail?
     @State private var failedURL: URL?
@@ -505,7 +541,7 @@ private struct ImagePreview: View {
                     Toggle("Actual Size", isOn: $actualSize).toggleStyle(.button)
                         .help("Inspect one image pixel per display pixel; zoom up to 4×.")
                     if actualSize {
-                        Slider(value: $zoom, in: 1...4, step: 0.25).accessibilityLabel("Preview zoom")
+                        Slider(value: $zoom, in: 1 ... 4, step: 0.25).accessibilityLabel("Preview zoom")
                         Text(zoom, format: .number.precision(.fractionLength(2))).monospacedDigit().font(.caption)
                     }
                 }
@@ -536,14 +572,15 @@ private struct ImagePreview: View {
             Text(url.lastPathComponent).font(.caption).lineLimit(1).truncationMode(.middle)
                 .help(url.path).textSelection(.enabled)
         }.frame(maxWidth: .infinity)
-        .task(id: PreviewRequest(url: url, actualSize: actualSize, storeID: thumbnails.id)) {
-            loaded = nil; failedURL = nil
-            let value = await thumbnails.load(url: url, scope: accessURL ?? url, fullSize: actualSize)
-            guard !Task.isCancelled else { return }
-            loaded = value
-            if value == nil { failedURL = url }
-        }
-
+            .task(id: PreviewRequest(url: url, actualSize: actualSize, storeID: thumbnails.id)) {
+                loaded = nil; failedURL = nil
+                let value = await thumbnails.load(url: url, scope: accessURL ?? url, fullSize: actualSize)
+                guard !Task.isCancelled else { return }
+                loaded = value
+                if value == nil {
+                    failedURL = url
+                }
+            }
     }
 }
 
@@ -563,6 +600,8 @@ private final class IncomingDropBatch {
     func receive(_ url: URL?, at index: Int) {
         urls[index] = url
         remaining -= 1
-        if remaining == 0 { completion(urls.compactMap { $0 }) }
+        if remaining == 0 {
+            completion(urls.compactMap { $0 })
+        }
     }
 }

@@ -29,24 +29,33 @@ enum SearchState: Sendable {
 }
 
 struct IncomingResult: Identifiable, Sendable, Equatable {
-    var id: URL { url }
+    var id: URL {
+        url
+    }
+
     let url: URL
     var candidates: [AssetCandidate] = []
     var error: String?
     var status: ComparisonStatus = .waiting
 
-    var statusText: String { String(localized: statusLabel) }
+    var statusText: String {
+        String(localized: statusLabel)
+    }
 
     var statusLabel: LocalizedStringResource {
         switch status {
         case .waiting: return "Waiting for catalog scan…"
         case .decoding: return "Reading image…"
         case .comparing:
-            if candidates.count == 1 { return "Comparing · 1 provisional match" }
+            if candidates.count == 1 {
+                return "Comparing · 1 provisional match"
+            }
             return "Comparing · \(candidates.count.formatted()) provisional matches"
         case .unreadable: return "Image unavailable"
         case .incomplete:
-            if candidates.count == 1 { return "Incomplete search · 1 match so far" }
+            if candidates.count == 1 {
+                return "Incomplete search · 1 match so far"
+            }
             return "Incomplete search · \(candidates.count.formatted()) matches so far"
         case .complete:
             switch candidates.count {
@@ -56,7 +65,6 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
             }
         }
     }
-
 }
 
 struct ScanSnapshot: Sendable {
@@ -76,8 +84,14 @@ final class ProjectSession {
     private(set) var results: [IncomingResult] = []
     private(set) var duplicateGroups: [DuplicateGroup] = []
     private(set) var state: SearchState = .idle
-    var isRunning: Bool { state == .running }
-    var isIncomplete: Bool { skipped > 0 || state == .cancelled || state == .failed }
+    var isRunning: Bool {
+        state == .running
+    }
+
+    var isIncomplete: Bool {
+        skipped > 0 || state == .cancelled || state == .failed
+    }
+
     private(set) var discovered = 0
     private(set) var compared = 0
     private(set) var decoded = 0
@@ -99,10 +113,14 @@ final class ProjectSession {
         let refreshing = self.root == root
         let previous = Dictionary(uniqueKeysWithValues: results.map { ($0.url, $0) })
         self.root = root
-        if !refreshing { duplicateGroups = [] }
+        if !refreshing {
+            duplicateGroups = []
+        }
         results = incoming.map { refreshing ? previous[$0] ?? IncomingResult(url: $0) : IncomingResult(url: $0) }
         if refreshing {
-            for index in results.indices where results[index].error == nil { results[index].status = .comparing }
+            for index in results.indices where results[index].error == nil {
+                results[index].status = .comparing
+            }
         }
         discovered = 0; compared = 0; decoded = 0; skipped = 0; error = nil
         phase = "Discovering image assets…"
@@ -112,7 +130,9 @@ final class ProjectSession {
             let rootAccess = root.startAccessingSecurityScopedResource()
             let access = incoming.filter { $0.startAccessingSecurityScopedResource() }
             defer {
-                if rootAccess { root.stopAccessingSecurityScopedResource() }
+                if rootAccess {
+                    root.stopAccessingSecurityScopedResource()
+                }
                 access.forEach { $0.stopAccessingSecurityScopedResource() }
             }
             let publisher = ScanPublisher { snapshot in await session.receive(snapshot, token: token) }
@@ -148,8 +168,11 @@ final class ProjectSession {
             return retained
         }
         for group in snapshot.duplicateGroups {
-            if let index = duplicateGroups.firstIndex(where: { $0.id == group.id }) { duplicateGroups[index] = group }
-            else { duplicateGroups.append(group) }
+            if let index = duplicateGroups.firstIndex(where: { $0.id == group.id }) {
+                duplicateGroups[index] = group
+            } else {
+                duplicateGroups.append(group)
+            }
         }
         discovered = snapshot.discovered
         compared = snapshot.compared
@@ -161,19 +184,26 @@ final class ProjectSession {
 
     private func finish(token: UUID) {
         guard token == generation else { return }
-        if let snapshot = latestSnapshot { results = snapshot.results; duplicateGroups = snapshot.duplicateGroups }
+        if let snapshot = latestSnapshot {
+            results = snapshot.results; duplicateGroups = snapshot.duplicateGroups
+        }
         latestSnapshot = nil
         state = error == nil ? .complete : .failed
-        if isIncomplete { markResultsIncomplete() }
-        else {
-            for index in results.indices where results[index].error == nil { results[index].status = .complete }
+        if isIncomplete {
+            markResultsIncomplete()
+        } else {
+            for index in results.indices where results[index].error == nil {
+                results[index].status = .complete
+            }
         }
         phase = error == nil ? "Search complete" : "Search failed"
         worker = nil
     }
 
     private func markResultsIncomplete() {
-        for index in results.indices where results[index].error == nil { results[index].status = .incomplete }
+        for index in results.indices where results[index].error == nil {
+            results[index].status = .incomplete
+        }
     }
 }
 
@@ -187,7 +217,9 @@ private actor ScanPublisher {
     private var hadMatches = false
     private var pending: ScanSnapshot?
 
-    init(publish: @escaping @Sendable (ScanSnapshot) async -> Void) { self.publish = publish }
+    init(publish: @escaping @Sendable (ScanSnapshot) async -> Void) {
+        self.publish = publish
+    }
 
     func receive(_ snapshot: ScanSnapshot) async {
         pending = snapshot
@@ -201,7 +233,9 @@ private actor ScanPublisher {
     }
 
     func finish() async {
-        if let pending { await publish(pending) }
+        if let pending {
+            await publish(pending)
+        }
         pending = nil
     }
 }

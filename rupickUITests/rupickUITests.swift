@@ -1,45 +1,58 @@
-import XCTest
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
+import XCTest
 
 final class rupickUITests: XCTestCase {
-    override func setUpWithError() throws { continueAfterFailure = false }
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
 
     #if DEBUG
-    @MainActor
-    func testStressFixturesAndPreviewControls() throws {
-        let app = XCUIApplication()
-        app.launchEnvironment["RUPICK_STRESS_UI"] = "1"
-        app.launchArguments = ["-AppleInterfaceStyle", "Dark"]
-        app.launch()
-        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
-        let picker = app.popUpButtons["stressDatasetPicker"]
-        XCTAssertTrue(picker.exists)
-        for name in ["Worst case", "Empty", "One", "1,000 assets", "Demo"] {
-            let previousRoot = app.staticTexts["projectHeading"].value as? String ?? ""
-            picker.click()
-            app.menuItems[name].click()
-            let changedRoot = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != %@", previousRoot),
-                                                        object: app.staticTexts["projectHeading"])
-            XCTAssertEqual(XCTWaiter.wait(for: [changedRoot], timeout: 30), .completed)
-            if name == "Empty" || name == "One" {
-                XCTAssertTrue(app.staticTexts["No exact duplicates found"].waitForExistence(timeout: 30))
-            } else {
-                XCTAssertTrue(app.staticTexts["Exact duplicate content"].waitForExistence(timeout: 30))
-                if name == "Worst case" {
-                    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Incomplete scan: 3")).firstMatch.waitForExistence(timeout: 30))
-                    XCTAssertTrue(app.descendants(matching: .any)["Actual Size"].firstMatch.exists)
-                    app.descendants(matching: .any)["Actual Size"].firstMatch.click()
-                    XCTAssertTrue(app.sliders["Preview zoom"].firstMatch.waitForExistence(timeout: 5))
+        @MainActor
+        func testStressFixturesAndPreviewControls() {
+            let app = XCUIApplication()
+            app.launchEnvironment["RUPICK_STRESS_UI"] = "1"
+            app.launchArguments = ["-AppleInterfaceStyle", "Dark"]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+            let picker = app.popUpButtons["stressDatasetPicker"]
+            XCTAssertTrue(picker.exists)
+            for name in ["Worst case", "Empty", "One", "1,000 assets", "Demo"] {
+                let previousRoot = app.staticTexts["projectHeading"].value as? String ?? ""
+                picker.click()
+                app.menuItems[name].click()
+                let changedRoot = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != %@", previousRoot),
+                                                            object: app.staticTexts["projectHeading"])
+                XCTAssertEqual(XCTWaiter.wait(for: [changedRoot], timeout: 30), .completed)
+                if name == "Empty" || name == "One" {
+                    XCTAssertTrue(app.staticTexts["No exact duplicates found"].waitForExistence(timeout: 30))
+                } else {
+                    XCTAssertTrue(app.staticTexts["Exact duplicate content"].waitForExistence(timeout: 30))
+                    if name == "Worst case" {
+                        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Incomplete scan: 3")).firstMatch.waitForExistence(timeout: 30))
+                        XCTAssertTrue(app.descendants(matching: .any)["Actual Size"].firstMatch.exists)
+                        app.descendants(matching: .any)["Actual Size"].firstMatch.click()
+                        XCTAssertTrue(app.sliders["Preview zoom"].firstMatch.waitForExistence(timeout: 5))
+                    }
+                }
+                XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: name == "1,000 assets" ? 120 : 30))
+                if name == "1,000 assets" {
+                    app.buttons["Choose asset"].firstMatch.click()
+                    let search = app.searchFields.firstMatch
+                    XCTAssertTrue(search.waitForExistence(timeout: 5))
+                    search.click()
+                    search.typeText("Image999")
+                    let row = app.sheets.firstMatch.staticTexts["Image999"].firstMatch
+                    XCTAssertTrue(row.waitForExistence(timeout: 5))
+                    row.click()
+                    XCTAssertTrue(app.staticTexts["Image999"].firstMatch.waitForExistence(timeout: 5))
                 }
             }
-            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: name == "1,000 assets" ? 120 : 30))
+            let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
         }
-        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
-    }
 
     #endif
 
@@ -48,7 +61,7 @@ final class rupickUITests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-scroll-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
-        for index in 0..<12 {
+        for index in 0 ..< 12 {
             let entry = root.appendingPathComponent("App/Primary.xcassets/Copy\(index).imageset")
             try FileManager.default.copyItem(at: root.appendingPathComponent("App/Primary.xcassets/Icon.imageset"), to: entry)
         }
@@ -77,7 +90,8 @@ final class rupickUITests: XCTestCase {
     @MainActor
     private func assertScrollBounds(_ scroll: XCUIElement, heading: XCUIElement,
                                     lastContent: XCUIElement, in app: XCUIApplication,
-                                    file: StaticString = #filePath, line: UInt = #line) {
+                                    file: StaticString = #filePath, line: UInt = #line)
+    {
         let window = app.windows.firstMatch
         let toolbar = app.windows.firstMatch.toolbars.firstMatch
         let footer = app.descendants(matching: .any)["searchFooter"].firstMatch
@@ -97,9 +111,9 @@ final class rupickUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(scroll.frame.minY, toolbar.frame.maxY, file: file, line: line)
             for element in [heading, app.staticTexts["projectHeading"]] {
                 XCTAssertGreaterThanOrEqual(element.frame.minY, toolbar.frame.maxY,
-                                           "Content must be fully below the toolbar.", file: file, line: line)
+                                            "Content must be fully below the toolbar.", file: file, line: line)
                 XCTAssertLessThanOrEqual(element.frame.minY, toolbar.frame.maxY + 24,
-                                        "The toolbar inset must not be counted twice.", file: file, line: line)
+                                         "The toolbar inset must not be counted twice.", file: file, line: line)
                 XCTAssertTrue(element.isHittable, file: file, line: line)
             }
             XCTAssertLessThanOrEqual(scroll.frame.maxY, footer.frame.minY + 1, file: file, line: line)
@@ -175,11 +189,11 @@ final class rupickUITests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-cancel-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024,
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        memset(try XCTUnwrap(bitmap.bitmapData), 255, bitmap.bytesPerRow * bitmap.pixelsHigh)
+                                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        try memset(XCTUnwrap(bitmap.bitmapData), 255, bitmap.bytesPerRow * bitmap.pixelsHigh)
         let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        for index in 0..<100 {
+        for index in 0 ..< 100 {
             let entry = root.appendingPathComponent("Assets.xcassets/Icon\(index).imageset")
             try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
             try data.write(to: entry.appendingPathComponent("image.png"))

@@ -1,8 +1,8 @@
-import Foundation
 import CoreImage
+import CryptoKit
+import Foundation
 import ImageIO
 import UniformTypeIdentifiers
-import CryptoKit
 
 private struct NormalizedImage {
     let image: CIImage
@@ -13,7 +13,8 @@ private struct NormalizedImage {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let type = CGImageSourceGetType(source),
               [UTType.png.identifier, UTType.jpeg.identifier].contains(type as String),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
             throw CocoaError(.fileReadCorruptFile)
         }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
@@ -32,7 +33,7 @@ private struct DecodedPixels: Equatable {
     let values: [Float]
 
     init(url: URL, context: CIContext) throws {
-        self.init(image: try NormalizedImage(url: url), context: context)
+        try self.init(image: NormalizedImage(url: url), context: context)
     }
 
     init(image: NormalizedImage, context: CIContext) {
@@ -51,7 +52,9 @@ private struct DecodedPixels: Equatable {
                     pointer[offset] = 0; pointer[offset + 1] = 0; pointer[offset + 2] = 0
                 }
                 // Float equality treats negative zero as zero. Canonicalize it before hashing.
-                for channel in 0..<4 where pointer[offset + channel] == 0 { pointer[offset + channel] = 0 }
+                for channel in 0 ..< 4 where pointer[offset + channel] == 0 {
+                    pointer[offset + channel] = 0
+                }
             }
         }
         values = pixels
@@ -77,9 +80,10 @@ private struct CatalogContents: Decodable {
         let appearances: [Appearance]?
         var label: String {
             ([idiom ?? "universal", scale ?? "any scale"] +
-             (appearances ?? []).map { "\($0.appearance): \($0.value)" }).joined(separator: " · ")
+                (appearances ?? []).map { "\($0.appearance): \($0.value)" }).joined(separator: " · ")
         }
     }
+
     let images: [Image]
 }
 
@@ -104,29 +108,39 @@ enum CatalogComparison {
         let ignoreRules = ProjectIgnoreRules(root: boundary)
         var entries: [URL] = []
         guard let enumerator = FileManager.default.enumerator(at: boundary,
-            includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey], options: [],
-            errorHandler: { _, _ in snapshot.skipped += 1; return true }) else {
+                                                              includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey], options: [],
+                                                              errorHandler: { _, _ in snapshot.skipped += 1; return true })
+        else {
             snapshot.error = "The project folder could not be read. Choose it again."
             await publish(snapshot); return
         }
         while let url = enumerator.nextObject() as? URL {
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
             if values?.isSymbolicLink == true || url.lastPathComponent == ".git" {
-                if values?.isDirectory == true { enumerator.skipDescendants() }
+                if values?.isDirectory == true {
+                    enumerator.skipDescendants()
+                }
                 continue
             }
             do {
                 if try ignoreRules.ignores(url, isDirectory: values?.isDirectory == true) {
-                    if values?.isDirectory == true { enumerator.skipDescendants() }
+                    if values?.isDirectory == true {
+                        enumerator.skipDescendants()
+                    }
                     continue
                 }
                 if url.pathExtension == "imageset", values?.isDirectory == true {
                     enumerator.skipDescendants()
                     var parent = url.deletingLastPathComponent()
-                    while parent.path != boundary.path, parent.pathExtension != "xcassets" { parent.deleteLastPathComponent() }
+                    while parent.path != boundary.path, parent.pathExtension != "xcassets" {
+                        parent.deleteLastPathComponent()
+                    }
                     if parent.pathExtension == "xcassets",
-                       try !ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) {
+                       try !ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false)
+                    {
                         entries.append(url)
                     }
                 }
@@ -140,33 +154,38 @@ enum CatalogComparison {
             }
         }
         let context = CIContext(options: [.useSoftwareRenderer: true, .outputPremultiplied: false,
-                                         .workingFormat: CIFormat.RGBAf,
-                                         .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
+                                          .workingFormat: CIFormat.RGBAf,
+                                          .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
         var incomingFingerprints: [PixelFingerprint?] = []
         var buckets: [PixelFingerprint: [ContentBucket]] = [:]
         snapshot.phase = "Reading incoming images…"
         for index in incoming.indices {
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             snapshot.results[index].status = .decoding
             await publish(snapshot)
             do {
-                incomingFingerprints.append(try autoreleasepool {
-                    PixelFingerprint(try DecodedPixels(url: incoming[index], context: context))
+                try incomingFingerprints.append(autoreleasepool {
+                    try PixelFingerprint(DecodedPixels(url: incoming[index], context: context))
                 })
-            }
-            catch {
+            } catch {
                 snapshot.results[index].status = .unreadable
                 incomingFingerprints.append(nil)
                 snapshot.results[index].error = "Could not read this PNG or JPEG. Check file access or choose another image, up to 16 megapixels and 8,192 pixels per side."
             }
-            if snapshot.results[index].error == nil { snapshot.results[index].status = .comparing }
+            if snapshot.results[index].error == nil {
+                snapshot.results[index].status = .comparing
+            }
             snapshot.decoded += 1
             await publish(snapshot)
         }
         snapshot.phase = "Comparing image assets…"
         await publish(snapshot)
         for entry in entries.sorted(by: { $0.path < $1.path }) {
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                return
+            }
             do {
                 let contentsURL = entry.appendingPathComponent("Contents.json")
                 guard withinRoot(contentsURL), try contentsURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw CocoaError(.fileReadNoPermission) }
@@ -179,12 +198,17 @@ enum CatalogComparison {
                     guard url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
                         snapshot.skipped += 1; continue
                     }
-                    if try ignoreRules.ignores(url, isDirectory: false) { continue }
+                    if try ignoreRules.ignores(url, isDirectory: false) {
+                        continue
+                    }
                     guard withinRoot(url),
-                          (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
+                          (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
+                    else {
                         snapshot.skipped += 1; continue
                     }
-                    if Task.isCancelled { return }
+                    if Task.isCancelled {
+                        return
+                    }
                     let representationID = url.path + "#" + String(imageIndex)
                     let matchingInputs: Set<Int>? = autoreleasepool { () -> Set<Int>? in
                         guard let normalized = try? NormalizedImage(url: url) else { return nil }
@@ -194,7 +218,9 @@ enum CatalogComparison {
                         let bucketIndex = contentBuckets.firstIndex {
                             (try? DecodedPixels(url: $0.reference, context: context)) == pixels
                         } ?? contentBuckets.count
-                        if bucketIndex == contentBuckets.count { contentBuckets.append(ContentBucket(reference: url)) }
+                        if bucketIndex == contentBuckets.count {
+                            contentBuckets.append(ContentBucket(reference: url))
+                        }
                         buckets[fingerprint] = contentBuckets
                         entryBuckets.append((fingerprint, bucketIndex, representationID))
                         // Hash only narrows the search. Verify every actual match with component equality.
@@ -203,16 +229,18 @@ enum CatalogComparison {
                             return (try? DecodedPixels(url: incoming[index], context: context)) == pixels
                         })
                     }
-                    if matchingInputs == nil { snapshot.skipped += 1 }
+                    if matchingInputs == nil {
+                        snapshot.skipped += 1
+                    }
                     variants.append((representationID, url, image.label, matchingInputs ?? []))
                 }
                 let location = String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1))
                 func candidate(matchingIDs: Set<String>) -> AssetCandidate {
                     AssetCandidate(id: entry.path, name: entry.deletingPathExtension().lastPathComponent,
-                        location: location, representations: variants.map {
-                            Representation(id: $0.id, url: $0.url, label: $0.label,
-                                           matches: matchingIDs.contains($0.id))
-                        })
+                                   location: location, representations: variants.map {
+                                       Representation(id: $0.id, url: $0.url, label: $0.label,
+                                                      matches: matchingIDs.contains($0.id))
+                                   })
                 }
                 // An asset appears once in each content group, with all its alternatives available.
                 var updated = Set<String>()
@@ -229,7 +257,9 @@ enum CatalogComparison {
                         let group = DuplicateGroup(id: groupID, members: bucket.members)
                         if let index = snapshot.duplicateGroups.firstIndex(where: { $0.id == groupID }) {
                             snapshot.duplicateGroups[index] = group
-                        } else { snapshot.duplicateGroups.append(group) }
+                        } else {
+                            snapshot.duplicateGroups.append(group)
+                        }
                     }
                 }
                 for index in incoming.indices {
