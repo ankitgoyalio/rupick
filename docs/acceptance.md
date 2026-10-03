@@ -54,3 +54,17 @@ Native synthetic tests cover a three-member group, a separate pair, same-named a
 The local validation executable now scans without incoming images first, verifies group uniqueness and distinct membership, and checks a group's complete membership against incoming comparison of its reference representation. The optional native acceptance configuration supports `expectedDuplicateGroups` alongside `expectedAssets` and `expectedSkipped`; positive group counts also require the native member and representation controls. Keep local-project configuration, inputs, content manifests, screenshots, and test logs outside the repository.
 
 Validation for #16 passed the full session/native UI suite and arm64 Release build. Local-project acceptance passed both Debug and optimized session runs and the native UI flow. Independent Git-rule catalog discovery and byte-content grouping agreed with every reported group. Full regular-file content hashes and symbolic-link targets remained unchanged, with a final post-UI inventory check. No confidential project identity, paths, images, configuration, or test artifacts are included in the repository.
+
+## Interface stress fixtures
+
+Debug builds support an opt-in fixture selector: launch with `RUPICK_STRESS_UI=1` in the scheme's environment. The toolbar offers Demo, Worst case, Empty, One, and 1,000 assets. Fixtures are generated locally in the app's temporary directory and cleaned up when replaced or the window closes; the selector and generator are absent in Release builds.
+
+Worst case includes long asset names, deep locations, repeated names in different catalogs, Unicode/RTL/emoji names, transparent dark artwork, panoramic and tall images, missing alternative images, and an unreadable catalog. The other states exercise empty scans, singleton scans, and a thousand-member duplicate group. All datasets use the normal discovery and comparison path. Additional automated coverage checks thumbnail cache invalidation and cancelled requests, singular status text, and retaining inspection during a rescan while replacing results after project files change.
+
+Check the minimum 950 × 620 window and a 220-point sidebar, larger windows, Light/Dark appearance, and increased accessibility contrast/text size. Confirm filenames remain distinguishable, full paths are available, warnings remain visible, and the final participant is reachable by scrolling. Compare previews on Grid/Light/Dark backgrounds and use Actual Size and its zoom slider to inspect transparency and pixel detail. Comparison Details must expose the read-only policy and exact-match limitations. Navigation and representation changes stay immediate; only the drop outline's exit and completion indicator use short opacity fades.
+
+Large duplicate groups use a searchable asset chooser instead of unbounded pop-up menus.
+
+![Dark appearance with synthetic fixture data](images/interface-dark.png)
+
+Thumbnail decoding is serialized off the main actor and cached per window with limits of 128 entries and 32 MiB of decoded pixels. Cache keys refresh file modification time and size before lookup. Actual-size decoding obeys the comparison engine's 16-megapixel and 8,192-pixel-side limits. Routine progress snapshots are coalesced to at most ten updates per second, while phase changes, first matches, errors, and final results publish immediately. Each comparison refresh rereads the catalog; inspected results are explicitly provisional until replaced by the completed scan, so no persistent comparison index requires invalidation.

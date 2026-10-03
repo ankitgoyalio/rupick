@@ -35,16 +35,28 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
     var error: String?
     var status: ComparisonStatus = .waiting
 
-    var statusText: String {
+    var statusText: String { String(localized: statusLabel) }
+
+    var statusLabel: LocalizedStringResource {
         switch status {
         case .waiting: return "Waiting for catalog scan…"
         case .decoding: return "Reading image…"
-        case .comparing: return "Comparing · \(candidates.count) provisional matches"
+        case .comparing:
+            if candidates.count == 1 { return "Comparing · 1 provisional match" }
+            return "Comparing · \(candidates.count.formatted()) provisional matches"
         case .unreadable: return "Image unavailable"
-        case .incomplete: return "Incomplete search · \(candidates.count) matches so far"
-        case .complete: return candidates.isEmpty ? "No matches found" : "\(candidates.count) exact matches"
+        case .incomplete:
+            if candidates.count == 1 { return "Incomplete search · 1 match so far" }
+            return "Incomplete search · \(candidates.count.formatted()) matches so far"
+        case .complete:
+            switch candidates.count {
+            case 0: return "No matches found"
+            case 1: return "1 exact match"
+            default: return "\(candidates.count.formatted()) exact matches"
+            }
         }
     }
+
 }
 
 struct ScanSnapshot: Sendable {
@@ -74,6 +86,7 @@ final class ProjectSession {
     private(set) var error: String?
     @ObservationIgnored private var worker: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
+    @ObservationIgnored private var latestSnapshot: ScanSnapshot?
 
     @discardableResult
     func start(root: URL, incoming: [URL]) -> Task<Void, Never> {
@@ -82,9 +95,15 @@ final class ProjectSession {
         let incoming = incoming.filter { seen.insert($0).inserted }
         let token = UUID()
         generation = token
+        latestSnapshot = nil
+        let refreshing = self.root == root
+        let previous = Dictionary(uniqueKeysWithValues: results.map { ($0.url, $0) })
         self.root = root
-        duplicateGroups = []
-        results = incoming.map { IncomingResult(url: $0) }
+        if !refreshing { duplicateGroups = [] }
+        results = incoming.map { refreshing ? previous[$0] ?? IncomingResult(url: $0) : IncomingResult(url: $0) }
+        if refreshing {
+            for index in results.indices where results[index].error == nil { results[index].status = .comparing }
+        }
         discovered = 0; compared = 0; decoded = 0; skipped = 0; error = nil
         phase = "Discovering image assets…"
         state = .running
@@ -96,9 +115,9 @@ final class ProjectSession {
                 if rootAccess { root.stopAccessingSecurityScopedResource() }
                 access.forEach { $0.stopAccessingSecurityScopedResource() }
             }
-            await CatalogComparison.run(root: root, incoming: incoming) { snapshot in
-                await session.receive(snapshot, token: token)
-            }
+            let publisher = ScanPublisher { snapshot in await session.receive(snapshot, token: token) }
+            await CatalogComparison.run(root: root, incoming: incoming) { snapshot in await publisher.receive(snapshot) }
+            await publisher.finish()
             await session.finish(token: token)
         }
         worker = task
@@ -110,6 +129,7 @@ final class ProjectSession {
         worker?.cancel()
         worker = nil
         generation = UUID()
+        latestSnapshot = nil
         state = .cancelled
         markResultsIncomplete()
         phase = "Search cancelled. Results are incomplete."
@@ -117,8 +137,20 @@ final class ProjectSession {
 
     private func receive(_ snapshot: ScanSnapshot, token: UUID) {
         guard token == generation else { return }
-        results = snapshot.results
-        duplicateGroups = snapshot.duplicateGroups
+        latestSnapshot = snapshot
+        // Retain inspected content while replacement results are still arriving.
+        // Completion always replaces it, including when files have disappeared or changed.
+        let previous = Dictionary(uniqueKeysWithValues: results.map { ($0.url, $0) })
+        results = snapshot.results.map { update in
+            guard update.error == nil, update.candidates.isEmpty,
+                  var retained = previous[update.url], !retained.candidates.isEmpty else { return update }
+            retained.status = .comparing
+            return retained
+        }
+        for group in snapshot.duplicateGroups {
+            if let index = duplicateGroups.firstIndex(where: { $0.id == group.id }) { duplicateGroups[index] = group }
+            else { duplicateGroups.append(group) }
+        }
         discovered = snapshot.discovered
         compared = snapshot.compared
         decoded = snapshot.decoded
@@ -129,6 +161,8 @@ final class ProjectSession {
 
     private func finish(token: UUID) {
         guard token == generation else { return }
+        if let snapshot = latestSnapshot { results = snapshot.results; duplicateGroups = snapshot.duplicateGroups }
+        latestSnapshot = nil
         state = error == nil ? .complete : .failed
         if isIncomplete { markResultsIncomplete() }
         else {
@@ -140,5 +174,34 @@ final class ProjectSession {
 
     private func markResultsIncomplete() {
         for index in results.indices where results[index].error == nil { results[index].status = .incomplete }
+    }
+}
+
+/// Keep repeated catalog snapshots from flooding the main actor. First matches,
+/// phase changes, errors, and the final snapshot remain immediate.
+private actor ScanPublisher {
+    private let publish: @Sendable (ScanSnapshot) async -> Void
+    private let clock = ContinuousClock()
+    private var lastUpdate: ContinuousClock.Instant?
+    private var lastPhase: String?
+    private var hadMatches = false
+    private var pending: ScanSnapshot?
+
+    init(publish: @escaping @Sendable (ScanSnapshot) async -> Void) { self.publish = publish }
+
+    func receive(_ snapshot: ScanSnapshot) async {
+        pending = snapshot
+        let now = clock.now
+        let hasMatches = !snapshot.duplicateGroups.isEmpty || snapshot.results.contains { !$0.candidates.isEmpty }
+        let important = lastPhase != snapshot.phase || snapshot.error != nil || (hasMatches && !hadMatches)
+        if important || lastUpdate.map({ $0.duration(to: now) >= .milliseconds(100) }) ?? true {
+            lastUpdate = now; lastPhase = snapshot.phase; hadMatches = hasMatches
+            await publish(snapshot)
+        }
+    }
+
+    func finish() async {
+        if let pending { await publish(pending) }
+        pending = nil
     }
 }
