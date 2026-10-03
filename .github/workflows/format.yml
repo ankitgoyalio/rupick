@@ -1,0 +1,17 @@
+name: Swift formatting
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Swift formatting
+        run: ./scripts/lint-format.sh --reporter github-actions-log
