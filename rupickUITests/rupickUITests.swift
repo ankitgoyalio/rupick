@@ -46,6 +46,7 @@ final class rupickUITests: XCTestCase {
                     let row = app.sheets.firstMatch.staticTexts["Image999"].firstMatch
                     XCTAssertTrue(row.waitForExistence(timeout: 5))
                     row.click()
+                    app.sheets.firstMatch.buttons["Choose"].click()
                     XCTAssertTrue(app.staticTexts["Image999"].firstMatch.waitForExistence(timeout: 5))
                 }
             }

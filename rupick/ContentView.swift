@@ -387,6 +387,7 @@ private struct DuplicateMemberPanel: View {
     let fallback: AssetCandidate
     @State private var choosingMember = false
     @State private var query = ""
+    @State private var pendingMemberID: String?
     var body: some View {
         let member = members.first { $0.id == selectedID } ?? fallback
         VStack(alignment: .leading) {
@@ -398,7 +399,11 @@ private struct DuplicateMemberPanel: View {
                     }
                 }.accessibilityIdentifier("duplicateMemberPicker")
             } else {
-                Button { choosingMember = true } label: {
+                Button {
+                    pendingMemberID = member.id
+                    query = ""
+                    choosingMember = true
+                } label: {
                     Label(member.name, systemImage: "chevron.up.chevron.down")
                         .lineLimit(1).truncationMode(.middle)
                 }.accessibilityLabel("Choose asset").help(member.location)
@@ -406,18 +411,22 @@ private struct DuplicateMemberPanel: View {
                         VStack {
                             Text("Choose an asset").font(.headline)
                             let filtered = members.filter { query.isEmpty || $0.name.localizedStandardContains(query) || $0.location.localizedStandardContains(query) }
-                            List(filtered) { candidate in
-                                Button {
-                                    selectedID = candidate.id
-                                    choosingMember = false
-                                } label: {
-                                    VStack(alignment: .leading) {
-                                        Text(candidate.name)
-                                        Text(candidate.location).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }.buttonStyle(.plain)
+                            List(filtered, selection: $pendingMemberID) { candidate in
+                                VStack(alignment: .leading) {
+                                    Text(candidate.name)
+                                    Text(candidate.location).font(.caption).foregroundStyle(.secondary)
+                                }.tag(candidate.id)
                             }.searchable(text: $query, prompt: "Name or location")
-                            Button("Cancel") { choosingMember = false }.keyboardShortcut(.cancelAction)
+                                .onChange(of: query) { _, _ in pendingMemberID = nil }
+                            HStack {
+                                Button("Cancel") { choosingMember = false }.keyboardShortcut(.cancelAction)
+                                Button("Choose") {
+                                    if let pendingMemberID {
+                                        selectedID = pendingMemberID
+                                    }
+                                    choosingMember = false
+                                }.disabled(pendingMemberID == nil).keyboardShortcut(.defaultAction)
+                            }
                         }.padding().frame(minWidth: 500, minHeight: 400)
                     }
             }
