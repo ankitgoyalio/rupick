@@ -101,6 +101,44 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
     }
 }
 
+// MARK: - ReusedAsset
+
+struct ReusedAsset: Sendable, Equatable {
+    let candidateID: String
+    let name: String
+    let location: String
+    let representation: Representation
+}
+
+// MARK: - ReviewOutcome
+
+enum ReviewOutcome: Sendable, Equatable {
+    case keepAsNew
+    case reuse(ReusedAsset)
+
+    static func reuse(candidate: AssetCandidate, representation: Representation) -> Self {
+        .reuse(ReusedAsset(candidateID: candidate.id, name: candidate.name,
+                           location: candidate.location, representation: representation))
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .keepAsNew:
+            "Reviewed · Keep as new"
+
+        case let .reuse(asset):
+            "Reviewed · Reuse \(asset.name)"
+        }
+    }
+}
+
+// MARK: - IncomingReview
+
+struct IncomingReview: Sendable, Equatable {
+    var outcome: ReviewOutcome?
+    var representationIDs = [String: String]()
+}
+
 // MARK: - ScanSnapshot
 
 struct ScanSnapshot: Sendable {
@@ -120,6 +158,7 @@ struct ScanSnapshot: Sendable {
 final class ProjectSession {
     private(set) var root: URL?
     private(set) var results = [IncomingResult]()
+    private(set) var reviews = [URL: IncomingReview]()
     private(set) var duplicateGroups = [DuplicateGroup]()
     private(set) var state = SearchState.idle
     var isRunning: Bool {
@@ -140,6 +179,47 @@ final class ProjectSession {
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var latestSnapshot: ScanSnapshot?
 
+    var reviewedCount: Int {
+        results.count { reviews[$0.url]?.outcome != nil }
+    }
+
+    func review(for incoming: URL) -> IncomingReview {
+        reviews[incoming] ?? IncomingReview()
+    }
+
+    func selectRepresentation(for incoming: URL, candidateID: String, representationID: String) {
+        guard results.first(where: { $0.url == incoming })?.candidates.contains(where: {
+            $0.id == candidateID && $0.representations.contains(where: { $0.id == representationID })
+        }) == true else {
+            return
+        }
+
+        reviews[incoming, default: IncomingReview()].representationIDs[candidateID] = representationID
+    }
+
+    @discardableResult
+    func reuseAsset(for incoming: URL, candidateID: String, representationID: String) -> Bool {
+        guard isRunning == false,
+              let result = results.first(where: { $0.url == incoming }), result.error == nil,
+              let candidate = result.candidates.first(where: { $0.id == candidateID }),
+              let representation = candidate.representations.first(where: { $0.id == representationID && $0.matches })
+        else {
+            return false
+        }
+
+        reviews[incoming, default: IncomingReview()].outcome = .reuse(candidate: candidate, representation: representation)
+        selectRepresentation(for: incoming, candidateID: candidateID, representationID: representationID)
+        return true
+    }
+
+    func keepAsNew(_ incoming: URL) {
+        guard isRunning == false, results.contains(where: { $0.url == incoming }) else {
+            return
+        }
+
+        reviews[incoming, default: IncomingReview()].outcome = .keepAsNew
+    }
+
     @discardableResult
     func start(root: URL, incoming: [URL]) -> Task<Void, Never> {
         worker?.cancel()
@@ -152,6 +232,7 @@ final class ProjectSession {
         let previous = Dictionary(uniqueKeysWithValues: results.map { ($0.url, $0) })
         self.root = root
         if refreshing == false {
+            reviews = [:]
             duplicateGroups = []
         }
         results = incoming.map { refreshing ? previous[$0] ?? IncomingResult(url: $0) : IncomingResult(url: $0) }

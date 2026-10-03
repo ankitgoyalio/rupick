@@ -39,6 +39,11 @@ final class rupickUITests: XCTestCase {
                     }
                 }
                 XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: name == "1,000 assets" ? 120 : 30))
+                if name == "Worst case" {
+                    exerciseReview(in: app, duplicateName: "PaymentConfirmationIllustration-Dark-HighContrast-Final.png",
+                                   otherName: "王秀英-نور-الهدى-👩🏽‍💻.png")
+                    app.descendants(matching: .any).matching(identifier: "duplicateGroup").firstMatch.click()
+                }
                 if name == "1,000 assets" {
                     app.buttons["Choose asset"].firstMatch.click()
                     let search = app.searchFields.firstMatch
@@ -266,6 +271,58 @@ final class rupickUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewOutcomesAndRepresentationRetention() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-review-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try copyFixture(to: root)
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        app.buttons["chooseImages"].click()
+        choose(root.appendingPathComponent("Incoming").path, in: app, selectAll: true)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        exerciseReview(in: app, duplicateName: "renamed.png", otherName: "new.png")
+    }
+
+    @MainActor
+    private func exerciseReview(in app: XCUIApplication, duplicateName: String, otherName: String) {
+        app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+        let pickers = app.popUpButtons.matching(identifier: "representationPicker")
+        XCTAssertTrue(pickers.firstMatch.waitForExistence(timeout: 10))
+        let picker = pickers.firstMatch
+        picker.click()
+        let alternative = app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Alternative")).firstMatch
+        if alternative.exists {
+            alternative.click()
+            XCTAssertFalse(app.buttons.matching(identifier: "reuseAsset").firstMatch.isEnabled)
+            let selected = picker.value as? String
+            app.descendants(matching: .any).matching(identifier: "incoming-" + otherName).firstMatch.click()
+            app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+            XCTAssertEqual(pickers.firstMatch.value as? String, selected)
+            pickers.firstMatch.click()
+        }
+        app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Exact match")).firstMatch.click()
+        let selected = pickers.firstMatch.value as? String
+        app.buttons.matching(identifier: "reuseAsset").firstMatch.click()
+        XCTAssertTrue(app.staticTexts["reviewOutcome"].label.contains("Reuse") || (app.staticTexts["reviewOutcome"].value as? String)?.contains("Reuse") == true)
+        app.descendants(matching: .any).matching(identifier: "incoming-" + otherName).firstMatch.click()
+        app.buttons["keepAsNew"].click()
+        app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+        XCTAssertEqual(pickers.firstMatch.value as? String, selected)
+        XCTAssertTrue(app.staticTexts["reviewOutcome"].label.contains("Reuse") || (app.staticTexts["reviewOutcome"].value as? String)?.contains("Reuse") == true)
+        app.buttons["keepAsNew"].click()
+        XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.exists)
+        XCTAssertTrue(pickers.firstMatch.exists)
+        app.descendants(matching: .any).matching(identifier: "incoming-" + otherName).firstMatch.click()
+        app.descendants(matching: .any).matching(identifier: "incoming-" + duplicateName).firstMatch.click()
+        XCTAssertTrue(app.staticTexts["reviewOutcome"].label.contains("Keep as new") || (app.staticTexts["reviewOutcome"].value as? String)?.contains("Keep as new") == true)
+        let progress = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "2 of ")).firstMatch
+        XCTAssertTrue((progress.value as? String ?? progress.label).hasPrefix("2 of "))
+    }
+
+    @MainActor
     func testMixedBatchPickerAndListNavigation() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-batch-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -459,6 +516,8 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["comparisonStatus"].waitForExistence(timeout: 10))
         let status = (app.staticTexts["comparisonStatus"].value as? String) ?? app.staticTexts["comparisonStatus"].label
         XCTAssertTrue(status == "No matches found" || status == "Incomplete search · 0 matches so far")
+        exerciseReview(in: app, duplicateName: URL(fileURLWithPath: config.duplicate).lastPathComponent,
+                       otherName: URL(fileURLWithPath: config.newImage).lastPathComponent)
     }
 
     @MainActor

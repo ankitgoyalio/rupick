@@ -60,6 +60,11 @@ struct ContentView: View {
                                             .truncationMode(.middle)
                                             .help(result.url.path)
                                         Text(result.statusLabel).font(.caption).foregroundStyle(.secondary)
+                                        Label(session.review(for: result.url).outcome?.label ?? "Unreviewed",
+                                              systemImage: session.review(for: result.url).outcome == nil ? "circle" : "checkmark.circle")
+                                            .font(.caption)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
                                     }
                                     .tag(SidebarSelection.incoming(result.url))
                                     .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
@@ -70,7 +75,7 @@ struct ContentView: View {
                     .navigationSplitViewColumnWidth(min: 220, ideal: 260)
                 } detail: {
                     if let result = session.results.first(where: { $0.url == selectedIncoming }) {
-                        ComparisonDetail(result: result, root: session.root, searchFailed: session.state == .failed)
+                        ComparisonDetail(result: result, session: session)
                     } else if let root = session.root {
                         if let group = session.duplicateGroups.first(where: { $0.id == selectedGroup }) ?? session.duplicateGroups.first {
                             DuplicateInspection(group: group, root: root).id(group.id)
@@ -152,9 +157,13 @@ struct ContentView: View {
                 preparingStress = true
                 defer { preparingStress = false }
                 let dataset = stressDataset
-                let task = Task.detached(priority: .utility) { try dataset.makeProject() }
+                let task = Task.detached(priority: .utility) {
+                    let root = try dataset.makeProject()
+                    do { return try (root, dataset.makeIncomingImages(in: root)) }
+                    catch { try? FileManager.default.removeItem(at: root); throw error }
+                }
                 do {
-                    let root = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+                    let (root, incoming) = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
                     guard Task.isCancelled == false else {
                         try? FileManager.default.removeItem(at: root); return
                     }
@@ -167,7 +176,7 @@ struct ContentView: View {
                     stressRoot = root
                     thumbnails = ThumbnailStore()
                     selectedIncoming = nil; selectedGroup = nil; dropNotice = nil
-                    session.start(root: root, incoming: [])
+                    session.start(root: root, incoming: incoming)
                 } catch {
                     if Task.isCancelled == false {
                         dropNotice = "Could not prepare fixture data."
@@ -346,8 +355,10 @@ private struct SessionProgress: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .opacity(session.state == .complete && session.isIncomplete == false ? 1 : 0)
+                    .scaleEffect(reduceMotion || session.state == .complete ? 1 : 0.95)
                     .accessibilityHidden(true)
-                    .animation(.timingCurve(0.23, 1, 0.32, 1, duration: reduceMotion ? 0.1 : 0.16), value: session.state)
+                    // Completion arrives asynchronously; navigation and review actions remain immediate.
+                    .animation(session.state == .complete ? .timingCurve(0.23, 1, 0.32, 1, duration: reduceMotion ? 0.1 : 0.16) : nil, value: session.state)
                 Text(session.phase).accessibilityIdentifier("searchStatus")
                 Spacer()
                 Text("\(session.compared, format: .number) / \(session.discovered, format: .number) assets compared")
@@ -367,6 +378,12 @@ private struct SessionProgress: View {
                 .font(.caption)
                 .monospacedDigit()
                 .accessibilityIdentifier("duplicateGroupCount")
+            if session.results.isEmpty == false {
+                Text("\(session.reviewedCount, format: .number) of \(session.results.count, format: .number) incoming images reviewed")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .accessibilityIdentifier("reviewProgress")
+            }
             if session.isRunning {
                 if session.discovered > 0 {
                     ProgressView(value: Double(session.compared), total: Double(session.discovered))
@@ -556,25 +573,27 @@ private struct DuplicateMemberPreview: View {
 
 private struct ComparisonDetail: View {
     let result: IncomingResult
-    let root: URL?
-    let searchFailed: Bool
+    let session: ProjectSession
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
                 Text(result.url.lastPathComponent).font(.title).accessibilityIdentifier("comparisonHeading")
                 if let error = result.error {
                     Text(error).foregroundStyle(.red)
-                } else if searchFailed {
+                } else if session.state == .failed {
                     Text("Search failed. Open the project folder again to retry.").foregroundStyle(.red)
                 } else {
                     Text(result.statusLabel).accessibilityIdentifier("comparisonStatus")
+                }
+                ReviewSummary(review: session.review(for: result.url), isRunning: session.isRunning) {
+                    session.keepAsNew(result.url)
                 }
                 HStack(alignment: .top, spacing: 16) {
                     ImagePreview(url: result.url, title: "Incoming")
                     if result.candidates.isEmpty == false {
                         LazyVStack(alignment: .leading, spacing: 16) {
                             ForEach(result.candidates) { candidate in
-                                CandidateInspection(root: root, candidate: candidate)
+                                CandidateInspection(root: session.root, candidate: candidate, incoming: result.url, session: session)
                             }
                         }.frame(maxWidth: .infinity)
                     }
@@ -585,14 +604,67 @@ private struct ComparisonDetail: View {
     }
 }
 
+// MARK: - ReviewSummary
+
+private struct ReviewSummary: View {
+    let review: IncomingReview
+    let isRunning: Bool
+    let keepAsNew: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    outcomeLabel
+                    Spacer()
+                    keepButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    outcomeLabel
+                    keepButton
+                }
+            }
+            if case let .reuse(asset) = review.outcome {
+                Text(asset.location).font(.caption).textSelection(.enabled)
+                Text("\(asset.representation.url.lastPathComponent) · \(asset.representation.label)")
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+            Text("Decisions stay in this session. Project files are unchanged.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if isRunning {
+                Text("Review when the search finishes.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var outcomeLabel: some View {
+        Label(review.outcome?.label ?? "Unreviewed", systemImage: review.outcome == nil ? "circle" : "checkmark.circle.fill")
+            .font(.headline)
+            .accessibilityIdentifier("reviewOutcome")
+    }
+
+    private var keepButton: some View {
+        Button("Keep as New", action: keepAsNew)
+            .accessibilityIdentifier("keepAsNew")
+            .disabled(isRunning)
+            .help("Record this image as new, including when exact matches exist.")
+    }
+}
+
 // MARK: - CandidateInspection
 
 private struct CandidateInspection: View {
     let root: URL?
     let candidate: AssetCandidate
-    @State private var selectedRepresentation: String?
+    let incoming: URL
+    let session: ProjectSession
     private var representation: Representation? {
-        candidate.representations.first(where: { $0.id == selectedRepresentation }) ??
+        candidate.representations.first(where: { $0.id == session.review(for: incoming).representationIDs[candidate.id] }) ??
             candidate.representations.first(where: \.matches)
     }
 
@@ -601,16 +673,22 @@ private struct CandidateInspection: View {
             Text(candidate.name).font(.headline)
             Text(candidate.location).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             Picker("Representation", selection: Binding(
-                get: { representation?.id ?? "" }, set: { selectedRepresentation = $0 }
+                get: { representation?.id ?? "" }, set: {
+                    session.selectRepresentation(for: incoming, candidateID: candidate.id, representationID: $0)
+                }
             )) {
                 ForEach(candidate.representations) { variant in
                     Text("\(variant.url.lastPathComponent) · \(variant.label) — \(variant.matches ? "Exact match" : "Alternative")").tag(variant.id)
                 }
             }.accessibilityIdentifier("representationPicker")
             if let representation {
-                HStack(alignment: .top, spacing: 16) {
-                    ImagePreview(url: representation.url, title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
+                ImagePreview(url: representation.url, title: representation.matches ? "Exact match" : "Alternative representation", accessURL: root)
+                Button("Reuse This Asset") {
+                    session.reuseAsset(for: incoming, candidateID: candidate.id, representationID: representation.id)
                 }
+                .accessibilityIdentifier("reuseAsset")
+                .disabled(session.isRunning || representation.matches == false)
+                .help(representation.matches ? Text("Record this asset and matching image file for the session.") : Text("Choose an exact matching representation to reuse this asset."))
             }
         }
         .padding()
