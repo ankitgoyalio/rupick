@@ -19,7 +19,10 @@ final class ProjectIgnoreRules {
                 }
                 pattern.removeLast()
             }
-            guard !pattern.isEmpty, !pattern.hasPrefix("#") else { return nil }
+            guard pattern.isEmpty == false, pattern.hasPrefix("#") == false else {
+                return nil
+            }
+
             negated = pattern.hasPrefix("!")
             if negated {
                 pattern.removeFirst()
@@ -41,15 +44,21 @@ final class ProjectIgnoreRules {
             if directoryOnly {
                 pattern.removeLast()
             }
-            guard !pattern.isEmpty else { return nil }
+            guard pattern.isEmpty == false else {
+                return nil
+            }
+
             self.directory = directory
             self.pattern = pattern
         }
 
         func matches(_ url: URL, isDirectory: Bool) -> Bool {
-            guard !directoryOnly || isDirectory else { return false }
+            guard directoryOnly == false || isDirectory else {
+                return false
+            }
+
             let relative = String(url.path.dropFirst(directory.path.hasSuffix("/") ? directory.path.count : directory.path.count + 1))
-            if !anchored, !pattern.contains("/") {
+            if anchored == false, pattern.contains("/") == false {
                 return Self.componentMatches(pattern, url.lastPathComponent)
             }
             return Self.pathMatches(pattern.split(separator: "/").map(String.init),
@@ -66,7 +75,10 @@ final class ProjectIgnoreRules {
             // Globstar matches whole directory components, including zero intermediate directories.
             var visited = Set<[Int]>()
             func match(_ ruleIndex: Int, _ pathIndex: Int) -> Bool {
-                guard visited.insert([ruleIndex, pathIndex]).inserted else { return false }
+                guard visited.insert([ruleIndex, pathIndex]).inserted else {
+                    return false
+                }
+
                 if ruleIndex == pattern.count {
                     return pathIndex == path.count
                 }
@@ -85,7 +97,7 @@ final class ProjectIgnoreRules {
     }
 
     private let root: URL
-    private var cache: [URL: [Rule]] = [:]
+    private var cache = [URL: [Rule]]()
 
     init(root: URL) {
         self.root = root
@@ -94,7 +106,7 @@ final class ProjectIgnoreRules {
     func ignores(_ url: URL, isDirectory: Bool) throws -> Bool {
         var ignored = false
         for rule in try rules(in: url.deletingLastPathComponent()) where rule.matches(url, isDirectory: isDirectory) {
-            ignored = !rule.negated
+            ignored = rule.negated == false
         }
         return ignored
     }

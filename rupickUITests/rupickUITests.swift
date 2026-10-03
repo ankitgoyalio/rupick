@@ -3,6 +3,8 @@ import ImageIO
 import UniformTypeIdentifiers
 import XCTest
 
+// MARK: - rupickUITests
+
 final class rupickUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -325,8 +327,10 @@ final class rupickUITests: XCTestCase {
     }
 
     private func copyFixture(to root: URL) throws {
-        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("fixtures/ExactMatching")
+        let fixture = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("fixtures/ExactMatching")
         try FileManager.default.copyItem(at: fixture, to: root)
         try Data().write(to: root.appendingPathComponent(".DS_Store"))
         let ignoredCatalog = root.appendingPathComponent("Dependencies/Ignored.xcassets")
@@ -380,6 +384,7 @@ final class rupickUITests: XCTestCase {
         guard FileManager.default.fileExists(atPath: configURL.path) else {
             throw XCTSkip("Provide the documented local acceptance config to run against another project.")
         }
+
         let config = try JSONDecoder().decode(AcceptanceConfig.self, from: Data(contentsOf: configURL))
         let app = XCUIApplication()
         app.launch()
@@ -465,6 +470,8 @@ final class rupickUITests: XCTestCase {
         open.click()
     }
 }
+
+// MARK: - AcceptanceConfig
 
 private struct AcceptanceConfig: Decodable {
     let root: String

@@ -1,12 +1,16 @@
 import Foundation
 import Observation
 
+// MARK: - Representation
+
 struct Representation: Identifiable, Sendable, Equatable {
     let id: String
     let url: URL
     let label: String
     let matches: Bool
 }
+
+// MARK: - AssetCandidate
 
 struct AssetCandidate: Identifiable, Sendable, Equatable {
     let id: String
@@ -15,18 +19,35 @@ struct AssetCandidate: Identifiable, Sendable, Equatable {
     let representations: [Representation]
 }
 
+// MARK: - DuplicateGroup
+
 struct DuplicateGroup: Identifiable, Sendable, Equatable {
     let id: String
     var members: [AssetCandidate]
 }
 
+// MARK: - ComparisonStatus
+
 enum ComparisonStatus: Sendable {
-    case waiting, decoding, comparing, complete, incomplete, unreadable
+    case waiting
+    case decoding
+    case comparing
+    case complete
+    case incomplete
+    case unreadable
 }
 
+// MARK: - SearchState
+
 enum SearchState: Sendable {
-    case idle, running, complete, cancelled, failed
+    case idle
+    case running
+    case complete
+    case cancelled
+    case failed
 }
+
+// MARK: - IncomingResult
 
 struct IncomingResult: Identifiable, Sendable, Equatable {
     var id: URL {
@@ -34,9 +55,9 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
     }
 
     let url: URL
-    var candidates: [AssetCandidate] = []
+    var candidates = [AssetCandidate]()
     var error: String?
-    var status: ComparisonStatus = .waiting
+    var status = ComparisonStatus.waiting
 
     var statusText: String {
         String(localized: statusLabel)
@@ -44,32 +65,47 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
 
     var statusLabel: LocalizedStringResource {
         switch status {
-        case .waiting: return "Waiting for catalog scan…"
-        case .decoding: return "Reading image…"
+        case .waiting:
+            return "Waiting for catalog scan…"
+
+        case .decoding:
+            return "Reading image…"
+
         case .comparing:
             if candidates.count == 1 {
                 return "Comparing · 1 provisional match"
             }
             return "Comparing · \(candidates.count.formatted()) provisional matches"
-        case .unreadable: return "Image unavailable"
+
+        case .unreadable:
+            return "Image unavailable"
+
         case .incomplete:
             if candidates.count == 1 {
                 return "Incomplete search · 1 match so far"
             }
             return "Incomplete search · \(candidates.count.formatted()) matches so far"
+
         case .complete:
             switch candidates.count {
-            case 0: return "No matches found"
-            case 1: return "1 exact match"
-            default: return "\(candidates.count.formatted()) exact matches"
+            case 0:
+                return "No matches found"
+
+            case 1:
+                return "1 exact match"
+
+            default:
+                return "\(candidates.count.formatted()) exact matches"
             }
         }
     }
 }
 
+// MARK: - ScanSnapshot
+
 struct ScanSnapshot: Sendable {
     var results: [IncomingResult]
-    var duplicateGroups: [DuplicateGroup] = []
+    var duplicateGroups = [DuplicateGroup]()
     var discovered = 0
     var compared = 0
     var decoded = 0
@@ -78,12 +114,14 @@ struct ScanSnapshot: Sendable {
     var error: String?
 }
 
+// MARK: - ProjectSession
+
 @MainActor @Observable
 final class ProjectSession {
     private(set) var root: URL?
-    private(set) var results: [IncomingResult] = []
-    private(set) var duplicateGroups: [DuplicateGroup] = []
-    private(set) var state: SearchState = .idle
+    private(set) var results = [IncomingResult]()
+    private(set) var duplicateGroups = [DuplicateGroup]()
+    private(set) var state = SearchState.idle
     var isRunning: Bool {
         state == .running
     }
@@ -113,7 +151,7 @@ final class ProjectSession {
         let refreshing = self.root == root
         let previous = Dictionary(uniqueKeysWithValues: results.map { ($0.url, $0) })
         self.root = root
-        if !refreshing {
+        if refreshing == false {
             duplicateGroups = []
         }
         results = incoming.map { refreshing ? previous[$0] ?? IncomingResult(url: $0) : IncomingResult(url: $0) }
@@ -126,7 +164,10 @@ final class ProjectSession {
         phase = "Discovering image assets…"
         state = .running
         let task = Task.detached(priority: .userInitiated) { [weak self] in
-            guard let session = self else { return }
+            guard let session = self else {
+                return
+            }
+
             let rootAccess = root.startAccessingSecurityScopedResource()
             let access = incoming.filter { $0.startAccessingSecurityScopedResource() }
             defer {
@@ -145,7 +186,10 @@ final class ProjectSession {
     }
 
     func cancel() {
-        guard isRunning else { return }
+        guard isRunning else {
+            return
+        }
+
         worker?.cancel()
         worker = nil
         generation = UUID()
@@ -156,14 +200,21 @@ final class ProjectSession {
     }
 
     private func receive(_ snapshot: ScanSnapshot, token: UUID) {
-        guard token == generation else { return }
+        guard token == generation else {
+            return
+        }
+
         latestSnapshot = snapshot
         // Retain inspected content while replacement results are still arriving.
         // Completion always replaces it, including when files have disappeared or changed.
         let previous = Dictionary(uniqueKeysWithValues: results.map { ($0.url, $0) })
         results = snapshot.results.map { update in
             guard update.error == nil, update.candidates.isEmpty,
-                  var retained = previous[update.url], !retained.candidates.isEmpty else { return update }
+                  var retained = previous[update.url], retained.candidates.isEmpty == false
+            else {
+                return update
+            }
+
             retained.status = .comparing
             return retained
         }
@@ -183,7 +234,10 @@ final class ProjectSession {
     }
 
     private func finish(token: UUID) {
-        guard token == generation else { return }
+        guard token == generation else {
+            return
+        }
+
         if let snapshot = latestSnapshot {
             results = snapshot.results; duplicateGroups = snapshot.duplicateGroups
         }
@@ -207,6 +261,8 @@ final class ProjectSession {
     }
 }
 
+// MARK: - ScanPublisher
+
 /// Keep repeated catalog snapshots from flooding the main actor. First matches,
 /// phase changes, errors, and the final snapshot remain immediate.
 private actor ScanPublisher {
@@ -224,8 +280,8 @@ private actor ScanPublisher {
     func receive(_ snapshot: ScanSnapshot) async {
         pending = snapshot
         let now = clock.now
-        let hasMatches = !snapshot.duplicateGroups.isEmpty || snapshot.results.contains { !$0.candidates.isEmpty }
-        let important = lastPhase != snapshot.phase || snapshot.error != nil || (hasMatches && !hadMatches)
+        let hasMatches = snapshot.duplicateGroups.isEmpty == false || snapshot.results.contains { $0.candidates.isEmpty == false }
+        let important = lastPhase != snapshot.phase || snapshot.error != nil || (hasMatches && hadMatches == false)
         if important || lastUpdate.map({ $0.duration(to: now) >= .milliseconds(100) }) ?? true {
             lastUpdate = now; lastPhase = snapshot.phase; hadMatches = hasMatches
             await publish(snapshot)

@@ -4,6 +4,8 @@ import ImageIO
 import Testing
 import UniformTypeIdentifiers
 
+// MARK: - ProjectSessionTests
+
 @MainActor
 struct ProjectSessionTests {
     @Test func openingProjectGroupsDistinctEntriesWithoutIncomingImages() async throws {
@@ -43,7 +45,7 @@ struct ProjectSessionTests {
         let session = ProjectSession()
         await session.start(root: fixture.root, incoming: []).value
         #expect(session.duplicateGroups.count == (matches ? 1 : 0))
-        #expect(!session.isIncomplete)
+        #expect(session.isIncomplete == false)
     }
 
     @Test func ignoredAndUnreadableFilesDoNotHideProjectDuplicates() async throws {
@@ -82,7 +84,7 @@ struct ProjectSessionTests {
             await Task.yield()
         }
         #expect(session.isRunning)
-        #expect(!session.duplicateGroups.isEmpty)
+        #expect(session.duplicateGroups.isEmpty == false)
         session.cancel()
         let retained = session.duplicateGroups
         await work.value
@@ -110,7 +112,8 @@ struct ProjectSessionTests {
     }
 
     @Test func invalidPathsAndSymbolicLinksAreIsolatedFromProjectGroups() async throws {
-        let fixture = try FixtureProject(), outside = try FixtureProject()
+        let fixture = try FixtureProject()
+        let outside = try FixtureProject()
         defer { fixture.remove(); outside.remove() }
         let image = try fixture.image("red.png")
         let external = try outside.image("external.png")
@@ -226,7 +229,7 @@ struct ProjectSessionTests {
         #expect(session.discovered == 1)
         #expect(session.results[0].candidates.map(\.name) == ["Good"])
         #expect(session.skipped == 0)
-        #expect(!session.isIncomplete)
+        #expect(session.isIncomplete == false)
     }
 
     @Test func nestedIgnoreRulesReincludeRepresentationsAndKeepExplicitInputs() async throws {
@@ -279,7 +282,7 @@ struct ProjectSessionTests {
         await session.start(root: fixture.root, incoming: [incoming]).value
         #expect(session.discovered == 2)
         #expect(session.results[0].candidates.map(\.name) == ["Icon2", "IconA"])
-        #expect(!session.isIncomplete)
+        #expect(session.isIncomplete == false)
     }
 
     @Test func unreadableIgnoreRulesFailRatherThanScanIgnoredCatalogs() async throws {
@@ -310,7 +313,7 @@ struct ProjectSessionTests {
         await session.start(root: fixture.root, incoming: [incoming]).value
         #expect(session.discovered == 20)
         #expect(session.results[0].candidates.count == 20)
-        #expect(!session.isIncomplete)
+        #expect(session.isIncomplete == false)
     }
 
     @Test func renamedImageMatchesCatalogEntry() async throws {
@@ -410,7 +413,8 @@ struct ProjectSessionTests {
     }
 
     @Test func neverFollowsCatalogOrRepresentationSymlinksOutsideRoot() async throws {
-        let fixture = try FixtureProject(), outside = try FixtureProject()
+        let fixture = try FixtureProject()
+        let outside = try FixtureProject()
         defer { fixture.remove(); outside.remove() }
         let incoming = try outside.image("incoming.png")
         try outside.asset("External.xcassets/Icon.imageset", images: [incoming])
@@ -428,7 +432,8 @@ struct ProjectSessionTests {
     }
 
     @Test func newerSelectionCannotBeOverwrittenByOldWork() async throws {
-        let first = try FixtureProject(), second = try FixtureProject()
+        let first = try FixtureProject()
+        let second = try FixtureProject()
         defer { first.remove(); second.remove() }
         let incoming = try first.image("incoming.png")
         try first.asset("Assets.xcassets/Icon.imageset", images: [incoming])
@@ -438,7 +443,7 @@ struct ProjectSessionTests {
         await current.value; await old.value
         #expect(session.root == second.root)
         #expect(session.results[0].candidates.isEmpty)
-        #expect(!session.isRunning)
+        #expect(session.isRunning == false)
     }
 
     @Test func provisionalResultsArriveBeforeCompletionAndCanBeCancelled() async throws {
@@ -458,10 +463,10 @@ struct ProjectSessionTests {
         #expect(session.results[0].status == .comparing)
         #expect(session.decoded == 1)
         #expect(session.compared > 0 && session.compared < session.discovered)
-        #expect(!session.results[0].candidates.isEmpty)
+        #expect(session.results[0].candidates.isEmpty == false)
         session.cancel()
         await task.value
-        #expect(!session.isRunning)
+        #expect(session.isRunning == false)
         #expect(session.phase.contains("incomplete"))
         #expect(session.results[0].status == .incomplete)
         #expect(session.state == .cancelled)
@@ -485,7 +490,7 @@ struct ProjectSessionTests {
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABEAYAAABPhRjKAAAAEUlEQVR4nGNISeHh+fWLkREADUIC19RxgVgAAAAASUVORK5CYII=",
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABEAYAAABPhRjKAAAAEUlEQVR4nGNISeXh+fWLkREADUkC2EudSFcAAAAASUVORK5CYII=",
         ]
-        var incoming: [URL] = []
+        var incoming = [URL]()
         for (index, value) in encoded.enumerated() {
             let url = fixture.root.appendingPathComponent("precision\(index).png")
             try #require(Data(base64Encoded: value)).write(to: url)
@@ -521,6 +526,8 @@ struct ProjectSessionTests {
     }
 }
 
+// MARK: - FixtureProject
+
 struct FixtureProject {
     let root: URL
     init() throws {
@@ -551,14 +558,17 @@ struct FixtureProject {
             properties[kCGImagePropertyPNGDictionary] = [kCGImagePropertyPNGDescription: metadata]
         }
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+        guard CGImageDestinationFinalize(destination) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
         return url
     }
 
     func asset(_ path: String, images: [URL]) throws {
         let folder = root.appendingPathComponent(path)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        var entries: [[String: String]] = []
+        var entries = [[String: String]]()
         for (index, image) in images.enumerated() {
             let name = "variant\(index).\(image.pathExtension)"
             try FileManager.default.copyItem(at: image, to: folder.appendingPathComponent(name))
