@@ -68,3 +68,33 @@ Large duplicate groups use a searchable asset chooser instead of unbounded pop-u
 ![Dark appearance with synthetic fixture data](images/interface-dark.png)
 
 Thumbnail decoding is serialized off the main actor and cached per window with limits of 128 entries and 32 MiB of decoded pixels. Cache keys refresh file modification time and size before lookup. Actual-size decoding obeys the comparison engine's 16-megapixel and 8,192-pixel-side limits. Routine progress snapshots are coalesced to at most ten updates per second, while phase changes, first matches, errors, and final results publish immediately. Each comparison refresh rereads the catalog; inspected results are explicitly provisional until replaced by the completed scan, so no persistent comparison index requires invalidation.
+
+## Review outcomes (#6)
+
+Use the incoming-image review card to record **Keep as New**, including when candidates exist. Choose an exact matching representation on a candidate and select **Reuse This Asset** to record that catalog-entry identity, location, and matching image file. Alternatives remain inspectable but cannot be recorded as matching reuse. Review controls become available when the search stops; provisional results are still visible during scanning. The sidebar shows reviewed/unreviewed state and the footer counts reviewed incoming images. Navigate away and back to verify the outcome and inspected representation remain selected. Adding incoming images rescans the project while retaining decisions; opening a different project resets them. Decisions are session-only and never modify project files.
+
+Native acceptance exercises both outcomes, keeping as new with candidates, alternative rejection, representation selection retention, and navigation back to a recorded decision. The optional local-project native test exercises the same review flow. ProjectSession coverage verifies catalog identity, matching representation, independent per-image decisions, rescan retention, project reset, invalid identities, and byte-for-byte unchanged fixture contents. The local validation executable also verifies both outcomes, rescan retention, preserved candidates, and unchanged catalog-file hashes.
+
+The debug fixture selector now includes incoming images through the normal comparison boundary. Set `RUPICK_STRESS_APPEARANCE=light` for a deterministic Light appearance during fixture validation. Worst case supplies long filenames and Unicode/RTL/emoji names; One and 1,000 assets exercise single-candidate and thousand-candidate review state. Empty supplies no incoming rows. Native stress acceptance reviews the worst-case incoming images and returns to duplicate inspection; session stress coverage records outcomes and rescans every dataset.
+
+Motion uses native file panels, pickers, sheets, popovers, scrolling, progress controls, and button feedback. The asynchronous completion mark has a 160 ms strong ease-out opacity/scale transition (0.95 to 1); Reduce Motion uses only a 100 ms fade. The Finder drop outline exits with a 125 ms fade (100 ms with Reduce Motion) and appears immediately. High-frequency navigation, representation selection, and review actions remain immediate. Motion review checks the full interface against the review-animations standards.
+
+Animation review verdict: **Approve**. No feel-breaking, layout-animation, timing, interruption, or reduced-motion findings. Reviewed `ContentView.swift` drop feedback, asynchronous completion feedback, native panels/popovers/sheets, and frequent inspection/review controls. Values match the review-animations standards (125–160 ms, strong ease-out, opacity/scale only, immediate high-frequency actions).
+
+| Before | After | Why |
+| --- | --- | --- |
+| No motion defects identified in the final review | Native behavior and scoped completion/drop feedback approved | Short, interruptible feedback; no animated layout or delayed review/navigation; Reduce Motion retains gentle opacity feedback |
+
+Stress validation also exposed a resize feedback loop when an inspection's lazily mounted header was offscreen. Inspection headers and controls now use regular stacks, while collection rows remain lazy. Native regression coverage resizes after scrolling to the final row and verifies toolbar/footer bounds. The geometry test starts at a known size within the display; the optional project test explicitly selects the new incoming row before asserting its status.
+
+![Light appearance at minimum window size with synthetic worst-case data](images/review-light.png)
+
+![Dark appearance at minimum window size with synthetic worst-case data](images/review-dark.png)
+
+## Welcome screen
+
+With no project selected, the window shows a centered app mark, app name and version, a native Open Project button, and a rounded guidance card. The sidebar, comparison counters, and incoming-image controls appear after choosing a project. Native acceptance checks Light and Dark appearances, opening and cancelling the folder picker by click and Command-O, and transition into the existing project inspection flow. The welcome, native picker/representation, and scroll-layout tests passed after this change.
+
+![Welcome screen in Light appearance](images/welcome-light.png)
+
+![Welcome screen in Dark appearance](images/welcome-dark.png)

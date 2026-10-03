@@ -8,6 +8,62 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ProjectSessionTests {
+    @Test func reviewOutcomesRetainIdentityAndLeaveProjectUnchanged() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("incoming.png")
+        let alternative = try fixture.image("blue.png", pixels: [0, 0, 255, 255])
+        try fixture.asset("A.xcassets/Icon.imageset", images: [image, alternative])
+        try fixture.asset("B.xcassets/Icon.imageset", images: [image])
+        let before = try projectContents(fixture.root)
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [image]).value
+        let result = try #require(session.results.first)
+        let candidate = try #require(result.candidates.last)
+        let representation = try #require(candidate.representations.first { $0.matches })
+        #expect(session.review(for: image).outcome == nil)
+        #expect(session.reuseAsset(for: image, candidateID: candidate.id, representationID: representation.id))
+        #expect(session.review(for: image).outcome == .reuse(candidate: candidate, representation: representation))
+        #expect(session.review(for: image).representationIDs[candidate.id] == representation.id)
+        let refresh = session.start(root: fixture.root, incoming: [image, alternative])
+        #expect(session.review(for: image).outcome != nil)
+        await refresh.value
+        #expect(session.review(for: image).outcome == .reuse(candidate: candidate, representation: representation))
+        session.keepAsNew(image)
+        #expect(session.review(for: image).outcome == .keepAsNew)
+        #expect(session.results.first?.candidates == result.candidates)
+        #expect(session.results.first?.status == .complete)
+        let after = try projectContents(fixture.root)
+        #expect(after == before)
+        await session.start(root: fixture.root.appendingPathComponent("Other"), incoming: [image]).value
+        #expect(session.review(for: image).outcome == nil)
+    }
+
+    @Test func reviewRejectsAlternativesAndUnknownIdentities() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("incoming.png")
+        let blue = try fixture.image("blue.png", pixels: [0, 0, 255, 255])
+        try fixture.asset("Assets.xcassets/Icon.imageset", images: [image, blue])
+        let session = ProjectSession()
+        await session.start(root: fixture.root, incoming: [image, blue]).value
+        let candidate = try #require(session.results.first?.candidates.first)
+        let alternative = try #require(candidate.representations.first { $0.matches == false })
+        session.selectRepresentation(for: image, candidateID: candidate.id, representationID: alternative.id)
+        #expect(session.review(for: image).representationIDs[candidate.id] == alternative.id)
+        #expect(session.reuseAsset(for: image, candidateID: candidate.id, representationID: alternative.id) == false)
+        #expect(session.reuseAsset(for: image, candidateID: "missing", representationID: alternative.id) == false)
+        #expect(session.review(for: image).outcome == nil)
+        session.keepAsNew(blue)
+        #expect(session.reviewedCount == 1)
+        let refresh = session.start(root: fixture.root, incoming: [image, blue])
+        session.keepAsNew(image)
+        #expect(session.review(for: image).outcome == nil)
+        await refresh.value
+        #expect(session.review(for: blue).outcome == .keepAsNew)
+        #expect(session.review(for: image).representationIDs[candidate.id] == alternative.id)
+    }
+
     @Test func openingProjectGroupsDistinctEntriesWithoutIncomingImages() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
@@ -576,4 +632,13 @@ struct FixtureProject {
         }
         try JSONSerialization.data(withJSONObject: ["images": entries, "info": ["version": 1, "author": "xcode"]]).write(to: folder.appendingPathComponent("Contents.json"))
     }
+}
+
+private func projectContents(_ root: URL) throws -> [String: Data] {
+    let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey])!
+    var contents = [String: Data]()
+    for case let url as URL in files where try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+        contents[url.path] = try Data(contentsOf: url)
+    }
+    return contents
 }

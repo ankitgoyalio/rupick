@@ -57,6 +57,31 @@
             #expect(session.results.allSatisfy { $0.candidates.count == candidates.count && $0.status == .complete })
         }
 
+        @Test(arguments: [StressDataset.empty, .one, .worst, .thousand])
+        func reviewStressDatasets(dataset: StressDataset) async throws {
+            let root = try dataset.makeProject()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let incoming = try dataset.makeIncomingImages(in: root)
+            let session = ProjectSession()
+            await session.start(root: root, incoming: incoming).value
+            guard let first = incoming.first, let candidate = session.results.first?.candidates.last,
+                  let representation = candidate.representations.first(where: \.matches)
+            else {
+                #expect(dataset == .empty && session.reviewedCount == 0)
+                return
+            }
+
+            #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: representation.id))
+            for url in incoming.dropFirst() {
+                session.keepAsNew(url)
+            }
+            #expect(session.reviewedCount == incoming.count)
+            await session.start(root: root, incoming: incoming).value
+            #expect(session.reviewedCount == incoming.count)
+            #expect(session.review(for: first).outcome == .reuse(candidate: candidate, representation: representation))
+            #expect(session.results.first?.candidates.count == (dataset == .thousand ? 1000 : dataset == .worst ? 16 : 1))
+        }
+
         @Test func thumbnailsReusePixelsAndInvalidateChangedFiles() async throws {
             let root = try StressDataset.one.makeProject()
             defer { try? FileManager.default.removeItem(at: root) }

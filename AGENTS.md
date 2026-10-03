@@ -76,3 +76,7 @@ Before submitting Swift changes:
 Use these scripts for the pinned formatter and repository config; they isolate formatting from personal settings and Xcode builds. The first run downloads and builds the formatter. CI uses the same lint command.
 
 When changing formatting tooling, consult `BuildTools/Package.swift` and `BuildTools/Package.resolved` for the version, and `.swiftformat` for rules and exclusions. Preserve the `preferKeyPath` exception unless the full test suite confirms closure conversions inside Swift Testing macros compile.
+
+## Punctuation
+
+Use periods, commas, colons, or parentheses in copy, documentation, comments, and messages. Em dashes (Unicode U+2014) are prohibited throughout this project and in responses about it.

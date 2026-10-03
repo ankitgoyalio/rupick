@@ -1,6 +1,6 @@
 # Animation Recipes
 
-Ready-to-build implementations for the cases that come up most. Start from the recipe, then adapt — don't rebuild from scratch.
+Ready-to-build implementations for the cases that come up most. Start from the recipe, then adapt - don't rebuild from scratch.
 
 Curves are the `--ease-out`, `--ease-in-out`, and `--ease-drawer` tokens defined in SKILL.md.
 
@@ -20,7 +20,7 @@ Any pressable element. Instant feedback that the interface heard the user.
 }
 ```
 
-`scale()` scales children too — the label and icons come along, which is what makes it read as a physical press.
+`scale()` scales children too - the label and icons come along, which is what makes it read as a physical press.
 
 No hover gating needed here: `:active` is a real press on touch. Gate any `:hover` styling separately.
 
@@ -45,7 +45,7 @@ Scales out of its trigger, not out of thin air.
 }
 ```
 
-The `transform-origin` is the whole point — the panel should look like it came out of the thing you clicked.
+The `transform-origin` is the whole point - the panel should look like it came out of the thing you clicked.
 
 ---
 
@@ -83,7 +83,7 @@ The one popover that stays centered.
 
 ```css
 .modal {
-  transform-origin: center; /* exempt — not anchored to a trigger */
+  transform-origin: center; /* exempt - not anchored to a trigger */
   transition:
     opacity 250ms var(--ease-out),
     transform 250ms var(--ease-out);
@@ -119,7 +119,7 @@ Animate the backdrop's opacity alongside it so they read as one surface.
 
 This is how Vaul hides a drawer before animating it in.
 
-Add drag and it becomes a gesture problem — see **Drag to dismiss** below.
+Add drag and it becomes a gesture problem - see **Drag to dismiss** below.
 
 ---
 
@@ -148,7 +148,7 @@ useEffect(() => { setMounted(true); }, []);
 // <div data-mounted={mounted}>
 ```
 
-When toasts stack and the list reflows, the opacity change has to work against the height change. There's no formula for that pair — adjust until it feels right, then check it again the next day.
+When toasts stack and the list reflows, the opacity change has to work against the height change. There's no formula for that pair - adjust until it feels right, then check it again the next day.
 
 ---
 
@@ -163,13 +163,13 @@ When toasts stack and the list reflows, the opacity change has to work against t
 }
 ```
 
-Keep it short — this is one of the few animations that costs layout on every frame, so a long duration is expensive as well as sluggish. Measure the content height in JS (or use a headless primitive that supplies it) rather than animating to `auto`.
+Keep it short - this is one of the few animations that costs layout on every frame, so a long duration is expensive as well as sluggish. Measure the content height in JS (or use a headless primitive that supplies it) rather than animating to `auto`.
 
 ---
 
 ## Stagger a group entrance
 
-For a list or grid the user sees occasionally — not for a list they scroll past all day.
+For a list or grid the user sees occasionally - not for a list they scroll past all day.
 
 ```css
 .item {
@@ -190,7 +190,7 @@ For a list or grid the user sees occasionally — not for a list they scroll pas
 }
 ```
 
-Stagger is decorative — it must never block interaction while it plays.
+Stagger is decorative - it must never block interaction while it plays.
 
 ---
 
@@ -214,7 +214,7 @@ For destructive actions where a plain click is too easy to fire by accident.
 }
 ```
 
-`linear` is correct here — the fill is a progress indicator, and progress shouldn't ease.
+`linear` is correct here - the fill is a progress indicator, and progress shouldn't ease.
 
 ---
 
@@ -222,7 +222,7 @@ For destructive actions where a plain click is too easy to fire by accident.
 
 Timing individual color transitions across a tab list never quite lands. Clip instead.
 
-Duplicate the tab list. Style the copy as the active state — different background, different text color. Clip the copy so only the active tab shows, and animate the clip on change:
+Duplicate the tab list. Style the copy as the active state - different background, different text color. Clip the copy so only the active tab shows, and animate the clip on change:
 
 ```css
 .tabs-active-copy {
@@ -250,7 +250,7 @@ Marketing surfaces only. Don't do this to functional UI a user visits daily.
 }
 ```
 
-Trigger with `IntersectionObserver`, or Motion's `useInView` with `{ once: true, margin: "-100px" }`. Fire it once — re-animating on every scroll-by is an interface fighting its reader.
+Trigger with `IntersectionObserver`, or Motion's `useInView` with `{ once: true, margin: "-100px" }`. Fire it once - re-animating on every scroll-by is an interface fighting its reader.
 
 ---
 
@@ -277,9 +277,9 @@ element.style.transform = `translateY(${distance}px)`;
 Four details that separate a good drag from a bad one:
 
 - **Pointer capture** once the drag starts, so it continues when the pointer leaves the element's bounds.
-- **Multi-touch protection** — `if (isDragging) return` on new touch points, or switching fingers mid-drag makes the element jump.
-- **Damping past boundaries** — dragging beyond a natural edge moves the element less the further it goes. Real things slow before they stop.
-- **Friction, not a wall** — allow the over-drag with rising resistance rather than refusing it.
+- **Multi-touch protection** - `if (isDragging) return` on new touch points, or switching fingers mid-drag makes the element jump.
+- **Damping past boundaries** - dragging beyond a natural edge moves the element less the further it goes. Real things slow before they stop.
+- **Friction, not a wall** - allow the over-drag with rising resistance rather than refusing it.
 
 Settle with a spring so an interrupted drag keeps its velocity:
 
@@ -306,7 +306,7 @@ When two states overlap visibly during a transition and no amount of easing or d
 }
 ```
 
-Without blur the eye reads two distinct objects swapping. Blur blends them into one perceived transformation. Keep it under 20px — heavy blur is expensive, especially in Safari.
+Without blur the eye reads two distinct objects swapping. Blur blends them into one perceived transformation. Keep it under 20px - heavy blur is expensive, especially in Safari.
 
 ---
 
