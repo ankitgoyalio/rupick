@@ -8,6 +8,55 @@ final class rupickUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    #if DEBUG
+        @MainActor
+        func testStressFixturesAndPreviewControls() {
+            let app = XCUIApplication()
+            app.launchEnvironment["RUPICK_STRESS_UI"] = "1"
+            app.launchArguments = ["-AppleInterfaceStyle", "Dark"]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+            let picker = app.popUpButtons["stressDatasetPicker"]
+            XCTAssertTrue(picker.exists)
+            for name in ["Worst case", "Empty", "One", "1,000 assets", "Demo"] {
+                let previousRoot = app.staticTexts["projectHeading"].value as? String ?? ""
+                picker.click()
+                app.menuItems[name].click()
+                let changedRoot = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != %@", previousRoot),
+                                                            object: app.staticTexts["projectHeading"])
+                XCTAssertEqual(XCTWaiter.wait(for: [changedRoot], timeout: 30), .completed)
+                if name == "Empty" || name == "One" {
+                    XCTAssertTrue(app.staticTexts["No exact duplicates found"].waitForExistence(timeout: 30))
+                } else {
+                    XCTAssertTrue(app.staticTexts["Exact duplicate content"].waitForExistence(timeout: 30))
+                    if name == "Worst case" {
+                        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Incomplete scan: 3")).firstMatch.waitForExistence(timeout: 30))
+                        XCTAssertTrue(app.descendants(matching: .any)["Actual Size"].firstMatch.exists)
+                        app.descendants(matching: .any)["Actual Size"].firstMatch.click()
+                        XCTAssertTrue(app.sliders["Preview zoom"].firstMatch.waitForExistence(timeout: 5))
+                    }
+                }
+                XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: name == "1,000 assets" ? 120 : 30))
+                if name == "1,000 assets" {
+                    app.buttons["Choose asset"].firstMatch.click()
+                    let search = app.searchFields.firstMatch
+                    XCTAssertTrue(search.waitForExistence(timeout: 5))
+                    search.click()
+                    search.typeText("Image999")
+                    let row = app.sheets.firstMatch.staticTexts["Image999"].firstMatch
+                    XCTAssertTrue(row.waitForExistence(timeout: 5))
+                    row.click()
+                    app.sheets.firstMatch.buttons["Choose"].click()
+                    XCTAssertTrue(app.staticTexts["Image999"].firstMatch.waitForExistence(timeout: 5))
+                }
+            }
+            let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+
+    #endif
+
     @MainActor
     func testScrollContentStaysBetweenToolbarAndSearchFooter() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-scroll-\(UUID().uuidString)")
@@ -23,6 +72,7 @@ final class rupickUITests: XCTestCase {
         choose(root.path, in: app)
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         let scroll = app.scrollViews["duplicateScrollView"]
+        scroll.scroll(byDeltaX: 0, deltaY: -10000)
         let finalMember = try XCTUnwrap(app.staticTexts.matching(identifier: "Packages/Other.xcassets/Icon.imageset").allElementsBoundByIndex.last)
         assertScrollBounds(scroll, heading: app.staticTexts["Exact duplicate content"],
                            lastContent: finalMember, in: app)
@@ -32,6 +82,7 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         let comparison = app.scrollViews["comparisonScrollView"]
+        comparison.scroll(byDeltaX: 0, deltaY: -10000)
         let finalPreview = try XCTUnwrap(app.staticTexts.matching(identifier: "light.png").allElementsBoundByIndex.last)
         assertScrollBounds(comparison, heading: app.staticTexts["comparisonHeading"],
                            lastContent: finalPreview, in: app)
@@ -100,11 +151,13 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["2 assets with equal content"].exists)
         XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
         XCTAssertTrue(app.staticTexts["App/Primary.xcassets/Icon.imageset"].firstMatch.exists)
+        app.scrollViews["duplicateScrollView"].scroll(byDeltaX: 0, deltaY: -10000)
         XCTAssertTrue(app.staticTexts["Packages/Other.xcassets/Icon.imageset"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["App/Primary.xcassets/Third.imageset"].exists)
         XCTAssertFalse(app.staticTexts["IgnoredDuplicate"].exists)
         XCTAssertFalse(app.staticTexts["Unique"].exists)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Incomplete scan: 1")).firstMatch.exists)
+        app.scrollViews["duplicateScrollView"].scroll(byDeltaX: 0, deltaY: 10000)
         XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateMemberPicker").count, 2)
         let picker = app.popUpButtons["duplicateRepresentationPicker"].firstMatch
         picker.click()
@@ -112,9 +165,14 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Alternative representation"].waitForExistence(timeout: 5))
         let memberPicker = app.popUpButtons["duplicateMemberPicker"].firstMatch
         memberPicker.click()
+        let assetChoices = app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", ".imageset"))
+        XCTAssertEqual(assetChoices.count, 3, "Each participating asset must appear exactly once")
+        XCTAssertEqual(Set(assetChoices.allElementsBoundByIndex.map(\.title)).count, 3)
         app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Third.imageset")).firstMatch.click()
         XCTAssertTrue(app.staticTexts["copy.png"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Comparison Details"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "safe to delete")).firstMatch.exists)
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     @MainActor
@@ -172,9 +230,10 @@ final class rupickUITests: XCTestCase {
         app.buttons["chooseImages"].click()
         choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
         XCTAssertTrue(app.staticTexts["Incomplete search · 2 matches so far"].waitForExistence(timeout: 30))
-        XCTAssertEqual(app.staticTexts.matching(identifier: "Icon").count, 2)
         XCTAssertTrue(app.staticTexts["App/Primary.xcassets/Icon.imageset"].exists)
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: -10000)
         XCTAssertTrue(app.staticTexts["Packages/Other.xcassets/Icon.imageset"].exists)
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: 10000)
         XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.exists)
         let picker = app.popUpButtons["representationPicker"].firstMatch
@@ -182,7 +241,9 @@ final class rupickUITests: XCTestCase {
         picker.click()
         app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Alternative")).firstMatch.click()
         XCTAssertTrue(app.staticTexts["Alternative representation"].waitForExistence(timeout: 5))
+        app.buttons["Comparison Details"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Resized copies")).firstMatch.exists)
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     @MainActor
@@ -220,7 +281,9 @@ final class rupickUITests: XCTestCase {
         app.buttons["chooseImages"].click()
         choose(root.appendingPathComponent("Incoming/new.png").path, in: app)
         XCTAssertTrue(app.staticTexts["No matches found"].firstMatch.waitForExistence(timeout: 30))
+        app.buttons["Comparison Details"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "does not guarantee")).firstMatch.exists)
+        app.typeKey(.escape, modifierFlags: [])
         try FileManager.default.removeItem(at: root)
         app.buttons["chooseImages"].click()
         choose(input.path, in: app)
@@ -330,7 +393,7 @@ final class rupickUITests: XCTestCase {
         }
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
         if let expectedGroups = config.expectedDuplicateGroups {
-            XCTAssertTrue(app.staticTexts["\(expectedGroups) exact duplicate groups"].exists)
+            XCTAssertTrue(app.staticTexts[expectedGroups == 1 ? "1 exact duplicate group" : "\(expectedGroups) exact duplicate groups"].exists)
             if expectedGroups > 0 {
                 XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
                 XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateMemberPicker").count, 2)
