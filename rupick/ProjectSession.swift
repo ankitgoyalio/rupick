@@ -15,6 +15,11 @@ struct AssetCandidate: Identifiable, Sendable, Equatable {
     let representations: [Representation]
 }
 
+struct DuplicateGroup: Identifiable, Sendable, Equatable {
+    let id: String
+    var members: [AssetCandidate]
+}
+
 enum ComparisonStatus: Sendable {
     case waiting, decoding, comparing, complete, incomplete, unreadable
 }
@@ -44,6 +49,7 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
 
 struct ScanSnapshot: Sendable {
     var results: [IncomingResult]
+    var duplicateGroups: [DuplicateGroup] = []
     var discovered = 0
     var compared = 0
     var decoded = 0
@@ -56,6 +62,7 @@ struct ScanSnapshot: Sendable {
 final class ProjectSession {
     private(set) var root: URL?
     private(set) var results: [IncomingResult] = []
+    private(set) var duplicateGroups: [DuplicateGroup] = []
     private(set) var state: SearchState = .idle
     var isRunning: Bool { state == .running }
     var isIncomplete: Bool { skipped > 0 || state == .cancelled || state == .failed }
@@ -76,6 +83,7 @@ final class ProjectSession {
         let token = UUID()
         generation = token
         self.root = root
+        duplicateGroups = []
         results = incoming.map { IncomingResult(url: $0) }
         discovered = 0; compared = 0; decoded = 0; skipped = 0; error = nil
         phase = "Discovering image assets…"
@@ -110,6 +118,7 @@ final class ProjectSession {
     private func receive(_ snapshot: ScanSnapshot, token: UUID) {
         guard token == generation else { return }
         results = snapshot.results
+        duplicateGroups = snapshot.duplicateGroups
         discovered = snapshot.discovered
         compared = snapshot.compared
         decoded = snapshot.decoded

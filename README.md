@@ -1,10 +1,10 @@
 # Rupick
 
-Your Xcode asset companion. Open a project folder, choose or drop incoming PNG or JPEG images, and inspect exact matches beside existing image representations. All analysis runs locally, and project assets are read only.
+Your Xcode asset companion. Open a project folder to discover exact duplicate content among existing image assets. Inspect group members and their representations side by side, or choose or drop incoming PNG or JPEG images to compare with the project. All analysis runs locally, and project assets are read only.
 
 Requires an Apple silicon Mac running macOS 15 or later and Xcode with Swift 6 support. Open `rupick.xcodeproj`, select the `rupick` scheme, and run on My Mac. Local builds use ad-hoc signing; no developer account is needed. See [the implementation decision](docs/adr/0001-native-exact-image-comparison.md) for sandbox, colour, orientation, and decoding policies.
 
-The search recursively discovers `.imageset` entries inside `.xcassets` within the selected folder, including nested projects and packages. It respects project-local `.gitignore` rules, prunes ignored directories and `.git` metadata, and does not follow symbolic links. Intentional ignore exclusions do not mark the scan incomplete. Each catalog entry is a separate result, even when asset names repeat. The representation picker identifies every exact variant and exposes scale and appearance alternatives.
+The search recursively discovers `.imageset` entries inside `.xcassets` within the selected folder, including nested projects and packages. It respects project-local `.gitignore` rules, prunes ignored directories and `.git` metadata, and does not follow symbolic links. Intentional ignore exclusions do not mark the scan incomplete. Each catalog entry is a separate result, even when asset names repeat. Duplicate groups contain at least two distinct catalog entries; repeated representations within one asset do not form a group. Equal content does not establish that assets are interchangeable or safe to delete. The representation picker identifies every exact variant and exposes scale and appearance alternatives.
 
 Progress and provisional matches appear while background work continues. Cancelled searches and skipped or unreadable images remain visibly incomplete. PNG and JPEG representations are supported; PDF, SVG, and other formats are reported as skipped. This milestone does not detect resized copies or changes to transparent padding. Catalog watching, review decisions, and restored sessions are subsequent milestones.
 

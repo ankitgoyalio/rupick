@@ -58,7 +58,7 @@ private struct DecodedPixels: Equatable {
     }
 }
 
-private struct PixelFingerprint: Equatable {
+private struct PixelFingerprint: Hashable {
     let width: Int
     let height: Int
     let digest: SHA256.Digest
@@ -81,6 +81,11 @@ private struct CatalogContents: Decodable {
         }
     }
     let images: [Image]
+}
+
+private struct ContentBucket {
+    let reference: URL
+    var members: [AssetCandidate] = []
 }
 
 enum CatalogComparison {
@@ -138,6 +143,7 @@ enum CatalogComparison {
                                          .workingFormat: CIFormat.RGBAf,
                                          .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
         var incomingFingerprints: [PixelFingerprint?] = []
+        var buckets: [PixelFingerprint: [ContentBucket]] = [:]
         snapshot.phase = "Reading incoming images…"
         for index in incoming.indices {
             if Task.isCancelled { return }
@@ -163,23 +169,34 @@ enum CatalogComparison {
             if Task.isCancelled { return }
             do {
                 let contentsURL = entry.appendingPathComponent("Contents.json")
-                guard withinRoot(contentsURL) else { throw CocoaError(.fileReadNoPermission) }
+                guard withinRoot(contentsURL), try contentsURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw CocoaError(.fileReadNoPermission) }
                 let contents = try JSONDecoder().decode(CatalogContents.self, from: Data(contentsOf: contentsURL))
-                var variants: [(url: URL, label: String, matchingInputs: Set<Int>)] = []
-                for image in contents.images {
+                var variants: [(id: String, url: URL, label: String, matchingInputs: Set<Int>)] = []
+                var entryBuckets: [(fingerprint: PixelFingerprint, index: Int, representationID: String)] = []
+                for (imageIndex, image) in contents.images.enumerated() {
                     guard let filename = image.filename else { continue }
                     let url = entry.appendingPathComponent(filename)
-                    guard withinRoot(url), url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
+                    guard url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
                         snapshot.skipped += 1; continue
                     }
                     if try ignoreRules.ignores(url, isDirectory: false) { continue }
-                    let matchingInputs: Set<Int>? = autoreleasepool {
-                        guard let image = try? NormalizedImage(url: url) else { return nil }
-                        guard incomingFingerprints.contains(where: {
-                            $0?.width == image.width && $0?.height == image.height
-                        }) else { return [] }
-                        let pixels = DecodedPixels(image: image, context: context)
+                    guard withinRoot(url),
+                          (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
+                        snapshot.skipped += 1; continue
+                    }
+                    if Task.isCancelled { return }
+                    let representationID = url.path + "#" + String(imageIndex)
+                    let matchingInputs: Set<Int>? = autoreleasepool { () -> Set<Int>? in
+                        guard let normalized = try? NormalizedImage(url: url) else { return nil }
+                        let pixels = DecodedPixels(image: normalized, context: context)
                         let fingerprint = PixelFingerprint(pixels)
+                        var contentBuckets = buckets[fingerprint, default: []]
+                        let bucketIndex = contentBuckets.firstIndex {
+                            (try? DecodedPixels(url: $0.reference, context: context)) == pixels
+                        } ?? contentBuckets.count
+                        if bucketIndex == contentBuckets.count { contentBuckets.append(ContentBucket(reference: url)) }
+                        buckets[fingerprint] = contentBuckets
+                        entryBuckets.append((fingerprint, bucketIndex, representationID))
                         // Hash only narrows the search. Verify every actual match with component equality.
                         return Set(incoming.indices.filter { index in
                             guard incomingFingerprints[index] == fingerprint else { return false }
@@ -187,17 +204,38 @@ enum CatalogComparison {
                         })
                     }
                     if matchingInputs == nil { snapshot.skipped += 1 }
-                    variants.append((url, image.label, matchingInputs ?? []))
+                    variants.append((representationID, url, image.label, matchingInputs ?? []))
+                }
+                let location = String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1))
+                func candidate(matchingIDs: Set<String>) -> AssetCandidate {
+                    AssetCandidate(id: entry.path, name: entry.deletingPathExtension().lastPathComponent,
+                        location: location, representations: variants.map {
+                            Representation(id: $0.id, url: $0.url, label: $0.label,
+                                           matches: matchingIDs.contains($0.id))
+                        })
+                }
+                // An asset appears once in each content group, with all its alternatives available.
+                var updated = Set<String>()
+                for content in entryBuckets {
+                    let groupID = buckets[content.fingerprint]![content.index].reference.path
+                    guard updated.insert(groupID).inserted else { continue }
+                    let matchingIDs = Set(entryBuckets.filter {
+                        $0.fingerprint == content.fingerprint && $0.index == content.index
+                    }.map(\.representationID))
+                    let member = candidate(matchingIDs: matchingIDs)
+                    buckets[content.fingerprint]![content.index].members.append(member)
+                    let bucket = buckets[content.fingerprint]![content.index]
+                    if bucket.members.count >= 2 {
+                        let group = DuplicateGroup(id: groupID, members: bucket.members)
+                        if let index = snapshot.duplicateGroups.firstIndex(where: { $0.id == groupID }) {
+                            snapshot.duplicateGroups[index] = group
+                        } else { snapshot.duplicateGroups.append(group) }
+                    }
                 }
                 for index in incoming.indices {
                     guard variants.contains(where: { $0.matchingInputs.contains(index) }) else { continue }
-                    let representations = variants.map {
-                        Representation(id: $0.url.path + $0.label, url: $0.url, label: $0.label,
-                                       matches: $0.matchingInputs.contains(index))
-                    }
-                    snapshot.results[index].candidates.append(AssetCandidate(id: entry.path,
-                        name: entry.deletingPathExtension().lastPathComponent,
-                        location: String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1)), representations: representations))
+                    let matchingIDs = Set(variants.filter { $0.matchingInputs.contains(index) }.map(\.id))
+                    snapshot.results[index].candidates.append(candidate(matchingIDs: matchingIDs))
                 }
             } catch { snapshot.skipped += 1 }
             snapshot.compared += 1

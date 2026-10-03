@@ -7,6 +7,155 @@ final class rupickUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
     @MainActor
+    func testScrollContentStaysBetweenToolbarAndSearchFooter() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-scroll-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try copyFixture(to: root)
+        for index in 0..<12 {
+            let entry = root.appendingPathComponent("App/Primary.xcassets/Copy\(index).imageset")
+            try FileManager.default.copyItem(at: root.appendingPathComponent("App/Primary.xcassets/Icon.imageset"), to: entry)
+        }
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let scroll = app.scrollViews["duplicateScrollView"]
+        let finalMember = try XCTUnwrap(app.staticTexts.matching(identifier: "Packages/Other.xcassets/Icon.imageset").allElementsBoundByIndex.last)
+        assertScrollBounds(scroll, heading: app.staticTexts["Exact duplicate content"],
+                           lastContent: finalMember, in: app)
+
+        app.buttons["chooseImages"].click()
+        choose(root.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let comparison = app.scrollViews["comparisonScrollView"]
+        let finalPreview = try XCTUnwrap(app.staticTexts.matching(identifier: "light.png").allElementsBoundByIndex.last)
+        assertScrollBounds(comparison, heading: app.staticTexts["comparisonHeading"],
+                           lastContent: finalPreview, in: app)
+    }
+
+    @MainActor
+    private func assertScrollBounds(_ scroll: XCUIElement, heading: XCUIElement,
+                                    lastContent: XCUIElement, in app: XCUIApplication,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.windows.firstMatch
+        let toolbar = app.windows.firstMatch.toolbars.firstMatch
+        let footer = app.descendants(matching: .any)["searchFooter"].firstMatch
+        XCTAssertTrue(toolbar.exists, file: file, line: line)
+        XCTAssertTrue(footer.exists, file: file, line: line)
+        XCTAssertTrue(scroll.exists, file: file, line: line)
+        for sizeChange in [CGVector.zero, CGVector(dx: 220, dy: 120), CGVector(dx: -220, dy: -120)] {
+            if sizeChange != .zero {
+                let previousSize = window.frame.size
+                let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+                    .withOffset(CGVector(dx: -2, dy: -2))
+                corner.press(forDuration: 0.2, thenDragTo: corner.withOffset(sizeChange))
+                XCTAssertEqual(window.frame.width, previousSize.width + sizeChange.dx, accuracy: 5, file: file, line: line)
+                XCTAssertEqual(window.frame.height, previousSize.height + sizeChange.dy, accuracy: 5, file: file, line: line)
+            }
+            scroll.scroll(byDeltaX: 0, deltaY: 10000)
+            XCTAssertGreaterThanOrEqual(scroll.frame.minY, toolbar.frame.maxY, file: file, line: line)
+            for element in [heading, app.staticTexts["projectHeading"]] {
+                XCTAssertGreaterThanOrEqual(element.frame.minY, toolbar.frame.maxY,
+                                           "Content must be fully below the toolbar.", file: file, line: line)
+                XCTAssertLessThanOrEqual(element.frame.minY, toolbar.frame.maxY + 24,
+                                        "The toolbar inset must not be counted twice.", file: file, line: line)
+                XCTAssertTrue(element.isHittable, file: file, line: line)
+            }
+            XCTAssertLessThanOrEqual(scroll.frame.maxY, footer.frame.minY + 1, file: file, line: line)
+            scroll.scroll(byDeltaX: 0, deltaY: -10000)
+            XCTAssertTrue(lastContent.isHittable, file: file, line: line)
+            XCTAssertLessThanOrEqual(lastContent.frame.maxY, footer.frame.minY,
+                                     "The final content must remain above the footer.", file: file, line: line)
+        }
+        scroll.scroll(byDeltaX: 0, deltaY: 10000)
+        let screenshot = XCTAttachment(screenshot: window.screenshot())
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
+    func testProjectDuplicateGroupsWithoutIncomingImages() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-duplicates-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try copyFixture(to: root)
+        let third = root.appendingPathComponent("App/Primary.xcassets/Third.imageset")
+        try FileManager.default.createDirectory(at: third, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: root.appendingPathComponent("Incoming/renamed.png"), to: third.appendingPathComponent("copy.png"))
+        try Data(#"{"images":[{"filename":"copy.png","scale":"3x"}]}"#.utf8).write(to: third.appendingPathComponent("Contents.json"))
+        let unique = root.appendingPathComponent("App/Primary.xcassets/Unique.imageset")
+        try FileManager.default.createDirectory(at: unique, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: root.appendingPathComponent("Incoming/new.png"), to: unique.appendingPathComponent("unique.png"))
+        try Data(#"{"images":[{"filename":"unique.png"}]}"#.utf8).write(to: unique.appendingPathComponent("Contents.json"))
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["3 assets with equal content"].exists)
+        XCTAssertTrue(app.staticTexts["2 assets with equal content"].exists)
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+        XCTAssertTrue(app.staticTexts["App/Primary.xcassets/Icon.imageset"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Packages/Other.xcassets/Icon.imageset"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["App/Primary.xcassets/Third.imageset"].exists)
+        XCTAssertFalse(app.staticTexts["IgnoredDuplicate"].exists)
+        XCTAssertFalse(app.staticTexts["Unique"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "Incomplete scan: 1")).firstMatch.exists)
+        XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateMemberPicker").count, 2)
+        let picker = app.popUpButtons["duplicateRepresentationPicker"].firstMatch
+        picker.click()
+        app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Alternative")).firstMatch.click()
+        XCTAssertTrue(app.staticTexts["Alternative representation"].waitForExistence(timeout: 5))
+        let memberPicker = app.popUpButtons["duplicateMemberPicker"].firstMatch
+        memberPicker.click()
+        app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Third.imageset")).firstMatch.click()
+        XCTAssertTrue(app.staticTexts["copy.png"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "safe to delete")).firstMatch.exists)
+    }
+
+    @MainActor
+    func testCompletedProjectScanHasDistinctEmptyState() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-empty-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["No exact duplicates found"].exists)
+    }
+
+    @MainActor
+    func testNativeProjectScanCancellationRetainsProvisionalGroups() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-cancel-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        memset(try XCTUnwrap(bitmap.bitmapData), 255, bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        for index in 0..<100 {
+            let entry = root.appendingPathComponent("Assets.xcassets/Icon\(index).imageset")
+            try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+            try data.write(to: entry.appendingPathComponent("image.png"))
+            try Data(#"{"images":[{"filename":"image.png","scale":"1x"}]}"#.utf8).write(to: entry.appendingPathComponent("Contents.json"))
+        }
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["Cancel Search"].exists)
+        app.buttons["Cancel Search"].click()
+        XCTAssertTrue(app.staticTexts["Search cancelled. Results are incomplete."].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+        XCTAssertFalse(app.staticTexts["No exact duplicates found"].exists)
+        XCTAssertTrue(app.popUpButtons["duplicateMemberPicker"].firstMatch.exists)
+    }
+
+    @MainActor
     func testNativePickersAndRepresentationInspection() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-ui-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -75,6 +224,9 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Search failed"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search failed. Open the project folder again to retry."].exists)
         XCTAssertFalse(app.staticTexts["No matches found"].exists)
+        app.buttons["projectDuplicates"].click()
+        XCTAssertTrue(app.staticTexts["Duplicate scan failed"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["No exact duplicates found"].exists)
     }
 
     @MainActor
@@ -137,7 +289,7 @@ final class rupickUITests: XCTestCase {
         for name in ["broken.png", "renamed.png", "new.png", "new.jpg", "new.jpe"] {
             XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "incoming-" + name).firstMatch.waitForExistence(timeout: 30))
         }
-        let broken = app.staticTexts["broken.png"].firstMatch
+        let broken = app.descendants(matching: .any).matching(identifier: "incoming-broken.png").firstMatch
         XCTAssertTrue(broken.waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["3 / 3 assets compared"].exists)
@@ -173,7 +325,15 @@ final class rupickUITests: XCTestCase {
             XCTAssertTrue(panel.waitForExistence(timeout: 5))
             panel.buttons["CancelButton"].click()
         }
-        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
+        if let expectedGroups = config.expectedDuplicateGroups {
+            XCTAssertTrue(app.staticTexts["\(expectedGroups) exact duplicate groups"].exists)
+            if expectedGroups > 0 {
+                XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+                XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateMemberPicker").count, 2)
+                XCTAssertEqual(app.popUpButtons.matching(identifier: "duplicateRepresentationPicker").count, 2)
+            }
+        }
         if let expectedAssets = config.expectedAssets {
             XCTAssertTrue(app.staticTexts["\(expectedAssets) / \(expectedAssets) assets compared"].exists)
         }
@@ -193,7 +353,7 @@ final class rupickUITests: XCTestCase {
                 XCTAssertTrue(panel.waitForExistence(timeout: 5))
                 panel.buttons["CancelButton"].click()
             }
-            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
             app.staticTexts[URL(fileURLWithPath: config.duplicate).lastPathComponent].firstMatch.click()
             XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 10))
             XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.exists)
@@ -204,12 +364,12 @@ final class rupickUITests: XCTestCase {
         } else {
             app.buttons["chooseImages"].click()
             choose(config.duplicate, in: app)
-            XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.waitForExistence(timeout: 600))
             XCTAssertTrue(app.popUpButtons["representationPicker"].firstMatch.exists)
-            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
             app.typeKey("i", modifierFlags: .command)
             choose(config.newImage, in: app)
-            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 180))
+            XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
         }
         XCTAssertTrue(app.staticTexts["comparisonStatus"].waitForExistence(timeout: 10))
         let status = (app.staticTexts["comparisonStatus"].value as? String) ?? app.staticTexts["comparisonStatus"].label
@@ -245,6 +405,7 @@ private struct AcceptanceConfig: Decodable {
     let duplicate: String
     let newImage: String
     let batchFolder: String?
+    let expectedDuplicateGroups: Int?
     let expectedAssets: Int?
     let expectedSkipped: Int?
 }
