@@ -1,6 +1,6 @@
 # Exact-match and batch acceptance
 
-The agreed seams are the observable `ProjectSession` and the running native macOS app, as specified in #3 and implemented for #4. No matching-helper or cache-layout tests are used.
+The agreed seams are the observable `ProjectSession`, its filesystem observation adapter, and the running native macOS app, as specified in #3 and implemented for #4. No matching-helper or cache-layout tests are used.
 
 `fixtures/ExactMatching` is a synthetic project with two catalogs sharing the name Icon, light and dark scale variants, a corrupt catalog, and incoming images covering renamed/re-encoded content, transparent hidden colour, a new visible colour, dimensions, padding, partial alpha, and corruption. Expected results are in `expectations.json`. Regenerate it deterministically with:
 
@@ -14,7 +14,7 @@ For a larger project, use a renamed copy of a known catalog PNG or JPEG and a kn
 
 ```sh
 swiftc -swift-version 6 -parse-as-library \
-  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ThumbnailStore.swift \
+  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ProjectObservation.swift rupick/ThumbnailStore.swift \
   rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift rupick/IncomingQueue.swift \
   scripts/validate-project.swift -o /tmp/rupick-validate
 /tmp/rupick-validate /path/to/project /path/to/duplicate.png /path/to/new.png
@@ -25,6 +25,20 @@ It also re-encodes the duplicate with different metadata and adds a corrupt inpu
 To repeat native UI acceptance against another project, create `/tmp/rupick-acceptance.json` locally with keys `root`, `duplicate`, and `newImage`, each containing an absolute path. Optionally add `batchFolder`, a folder containing the duplicate, new PNG/JPEG inputs, and `broken.png` (invalid image bytes), to exercise multi-selection and failure isolation. Run `rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided` through Xcode or `xcodebuild -only-testing:rupickUITests/rupickUITests/testRealProjectWhenAcceptanceConfigIsProvided`. Without that file the optional test is skipped. Remove it afterward. Never commit this config, project images, paths, screenshots, test bundles, or logs from confidential projects.
 
 During a large search, navigate existing results, open the image panel, cancel it, and select another incoming image. Confirm progress continues, provisional matches appear, and variant controls remain usable. Compare checksums of catalog contents before and after validation to confirm the project is untouched.
+
+To measure first-pass performance independently of incoming-image and review checks, compile the session benchmark:
+
+```sh
+swiftc -swift-version 6 -parse-as-library -O \
+  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ProjectObservation.swift rupick/ThumbnailStore.swift \
+  rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift rupick/IncomingQueue.swift \
+  scripts/benchmark-project.swift -o /tmp/rupick-benchmark
+/usr/bin/time -l /tmp/rupick-benchmark /path/to/project
+```
+
+It reports three fresh-session scans with native observation enabled, each followed by a cached refresh. Timing includes opening the project, establishing observation, discovery, normalization, exact verification, and publishing the completed session. Build time is excluded. The time command reports peak resident memory across the entire three-session process, including cached refreshes and teardown. Filesystem and OS caches remain intact. Each session starts with empty comparison caches. Compare medians using identical compiler options, the same project, and an idle machine. For Debug measurements, replace `-O` with `-Onone -D DEBUG` and include `rupick/StressFixtures.swift`. The benchmark checks that cached refreshes retain the same ordered duplicate results and reports normalization counts, skipped files, and main-actor heartbeats. Keep output local.
+
+Observation and first-pass comparison share one catalog inventory. Later comparison discovery omits observation metadata and prunes image-set descendants. Image preparation uses at most four actor-owned workers, each retaining its ignore-rule cache for the scan. Workers share the session cache's thread-safe Core Image renderer and a 512 MiB allowance for active normalized pixel buffers. Up to two maximum-size supported images can decode concurrently; smaller images can use all four workers. Image headers are checked before bitmap allocation, using the same bytes that are subsequently decoded. Retiring and replacement scans share the allowance, and cancelled waiters release their reservation without decoding. Source bytes, retained pixels, framework working buffers, and sequential exact verification are additional to the allowance; it is not a process-memory limit. Batches bound completed preparation; result assembly remains in catalog-path order. Exact normalization and full component verification are unchanged. Observation-only failures beneath image sets retain change markers; comparison preparation reports unreadable listed metadata and representations once, so unused descendants do not change scan completeness.
 
 The deployment target is macOS 15 on Apple silicon (arm64). Debug and arm64 Release builds validate the deployment target and SDK availability checks. Runtime validation is performed on macOS 26.7.1 with Xcode 27.0 on Apple silicon; a macOS 15 runtime is unavailable in the current environment. Testing on that minimum runtime remains a release validation item, not a claimed test result.
 
@@ -68,7 +82,7 @@ Large duplicate groups use a searchable asset chooser instead of unbounded pop-u
 
 ![Dark appearance with synthetic fixture data](images/interface-dark.png)
 
-Thumbnail decoding is serialized off the main actor and cached per window with limits of 128 entries and 32 MiB of decoded pixels. Cache keys refresh file modification time and size before lookup. Actual-size decoding obeys the comparison engine's 16-megapixel and 8,192-pixel-side limits. Routine progress snapshots are coalesced to at most ten updates per second, while phase changes, first matches, errors, and final results publish immediately. Each comparison refresh rereads the catalog; inspected results are explicitly provisional until replaced by the completed scan, so no persistent comparison index requires invalidation.
+Thumbnail decoding is serialized off the main actor and cached per window with limits of 128 entries and 32 MiB of decoded pixels. Cache keys refresh file modification time and size before lookup. Actual-size decoding obeys the comparison engine's 16-megapixel and 8,192-pixel-side limits. Routine progress snapshots are coalesced to at most ten updates per second, while phase changes, first matches, errors, and final results publish immediately. Each comparison refresh rereads catalog metadata and reconciles grouping; a per-session index retains lightweight fingerprints and verified equalities by file identity, size, and nanosecond modification/change times. A bounded cache reuses normalized pixels by verified source-byte identity. Inspected results remain provisional until replaced by the completed scan.
 
 ## Project lifecycle
 
@@ -105,3 +119,17 @@ With no project selected, the window uses a compact 480 × 600-point content are
 ![Welcome screen in Light appearance](images/welcome-light.png)
 
 ![Welcome screen in Dark appearance](images/welcome-dark.png)
+
+
+## Automatic catalog updates (#7)
+
+Each open project session owns a native FSEvents observation through `ProjectObservationAdapter`. The stream watches the selected root recursively with file and root-change events and a 150 ms delivery latency. Metadata inventories run off the main actor, respect project-local ignore rules, and suppress duplicate notifications. Catalog files, directories and `.gitignore` changes trigger reconciliation; symbolic links and `.git` remain excluded. Canonical filesystem paths keep aliased roots and enumerated files within the same boundary. File identity, size, modification time and nanosecond change time identify replacements, metadata changes and permission changes. Recovery events reconcile the whole inventory.
+
+Detected changes immediately invalidate old scan publishers and mark visible results provisional. A 250 ms quiet period coalesces edits before the final scan. The session preserves accepted incoming order and inspection until authoritative completion, then removes disappeared groups and representations, updates labels and completeness, and clears reuse decisions whose representation no longer matches. Thumbnail stores are replaced for each refresh. A per-session index retains fingerprints and previously verified component equality for unchanged file identities, sizes and nanosecond modification/change times. Records for removed representations are pruned after completed scans. The normalized-pixel cache verifies source bytes after SHA-256 lookup and is bounded to 128 entries and 32 MiB, including retained source bytes. Unchanged images avoid repeated reading and decoding even beyond the pixel-cache capacity; metadata enumeration and grouping still reconcile the included catalog. Changed images and new equality pairs are decoded and verified as needed. Observation ends at project closure; retired inventory, workers and previews release their own read-only access before fixture cleanup. Failure to start observation shows recovery guidance.
+
+`InterfaceRegressionTests` validates native observation through fixture catalog additions/removals, representation additions/removals, image corruption and recovery, metadata label changes, ignore-rule changes, preview invalidation and rapid atomic writes. `ProjectLifecycleTests` injects observation events and controls scan completion to verify obsolete results are rejected during the quiet period and after closure. A 150-representation fixture exceeds the pixel-cache entry limit and verifies through session scan diagnostics (`imageDecodes`) that a metadata refresh performs no additional decoding. Aliased roots and roots without directory hints also exercise discovery and observation. Native UI regression waits for the inspected alternative to disappear automatically after a metadata edit, without choosing another image to refresh.
+
+For local-project acceptance, use the existing local-only configuration and validator. To verify mutations, use a disposable local copy, add a synthetic catalog using a known duplicate, modify its metadata and image, then remove it. Wait for eventual session/native results after each operation. Keep all project identities, inputs, paths, manifests and output artifacts outside the repository. The original project must retain its complete regular-file and symbolic-link inventory.
+
+
+Validation for #7 passed the complete session/native UI suite, the final session diagnostics regressions, arm64 Release build, and pinned formatting lint. Native local-project acceptance and Debug/optimized validation passed. A disposable local project copy passed automatic catalog addition, metadata edits, preview invalidation, rapid corruption/recovery, removal and completeness checks. The original project's full regular-file hashes and symbolic-link inventory remained unchanged. Standards and spec reviews against `main` reported no remaining findings. Confidential configuration, inputs and test artifacts remain outside the repository.

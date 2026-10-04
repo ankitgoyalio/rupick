@@ -1,7 +1,9 @@
 import CoreImage
 import CryptoKit
+import Darwin
 import Foundation
 import ImageIO
+import Synchronization
 import UniformTypeIdentifiers
 
 // MARK: - NormalizedImage
@@ -11,8 +13,37 @@ private struct NormalizedImage {
     let width: Int
     let height: Int
 
-    init(url: URL) throws {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+    /// Inspect the same source bytes that will be decoded. Reject oversized headers
+    /// before ImageIO allocates a bitmap, and reserve the floating-point output size.
+    static func decodedByteCount(data: Data) throws -> Int {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source),
+              [UTType.png.identifier, UTType.jpeg.identifier].contains(type as String),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = (properties[kCGImagePropertyPixelWidth as String] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight as String] as? NSNumber)?.intValue
+        else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        guard width > 0, height > 0, width <= 8192, height <= 8192,
+              width * height <= 16_777_216
+        else {
+            throw CocoaError(.fileReadTooLarge)
+        }
+
+        return width * height * 4 * MemoryLayout<Float>.size
+    }
+
+    static func makeContext() -> CIContext {
+        CIContext(options: [.useSoftwareRenderer: true, .outputPremultiplied: false,
+                            .workingFormat: CIFormat.RGBAf,
+                            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
+    }
+
+    init(data: Data) throws {
+        _ = try Self.decodedByteCount(data: data)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let type = CGImageSourceGetType(source),
               [UTType.png.identifier, UTType.jpeg.identifier].contains(type as String),
               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -33,16 +64,48 @@ private struct NormalizedImage {
     }
 }
 
+// MARK: - ImageDecodeBudget
+
+/// Bound concurrent normalized buffers across retiring and replacement scans.
+/// Framework working buffers and source bytes are additional to this allowance.
+private actor ImageDecodeBudget {
+    static let capacity = 512 * 1024 * 1024
+    private struct Waiter {
+        let bytes: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private var used = 0
+    private var waiters = [Waiter]()
+
+    func acquire(bytes: Int) async {
+        // A request that fills the allowance runs alone.
+        let bytes = min(bytes, Self.capacity)
+        if waiters.isEmpty, used + bytes <= Self.capacity {
+            used += bytes
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(Waiter(bytes: bytes, continuation: continuation))
+        }
+    }
+
+    func release(bytes: Int) {
+        used -= min(bytes, Self.capacity)
+        while let first = waiters.first, used + first.bytes <= Self.capacity {
+            waiters.removeFirst()
+            used += first.bytes
+            first.continuation.resume()
+        }
+    }
+}
+
 // MARK: - DecodedPixels
 
-private struct DecodedPixels: Equatable {
+private struct DecodedPixels: Equatable, Sendable {
     let width: Int
     let height: Int
     let values: [Float]
-
-    init(url: URL, context: CIContext) throws {
-        try self.init(image: NormalizedImage(url: url), context: context)
-    }
 
     init(image: NormalizedImage, context: CIContext) {
         let width = image.width
@@ -72,7 +135,7 @@ private struct DecodedPixels: Equatable {
 
 // MARK: - PixelFingerprint
 
-private struct PixelFingerprint: Hashable {
+private struct PixelFingerprint: Hashable, Sendable {
     let width: Int
     let height: Int
     let digest: SHA256.Digest
@@ -107,74 +170,272 @@ private struct ContentBucket {
     var members = [AssetCandidate]()
 }
 
+// MARK: - CatalogComparisonCache
+
+/// Per-session cache. Byte identity handles atomic replacement and preserved timestamps.
+/// Only immutable pixels cross workers; both entry count and decoded memory are bounded.
+final class CatalogComparisonCache: Sendable {
+    // CIContext is immutable and Sendable in the SDK and supports concurrent rendering.
+    // Share its working resources instead of allocating a renderer for every worker.
+    fileprivate let context = NormalizedImage.makeContext()
+    private let decodeBudget = ImageDecodeBudget()
+    private struct Entry: Sendable {
+        let digest: SHA256.Digest
+        let pixels: DecodedPixels
+        let source: Data
+        var cost: Int {
+            pixels.values.count * MemoryLayout<Float>.size + source.count
+        }
+    }
+
+    private struct Identity: Hashable, Sendable {
+        let url: URL
+        let size: Int64
+        let inode: UInt64
+        let modifiedSeconds: Int
+        let modifiedNanoseconds: Int
+        let changedSeconds: Int
+        let changedNanoseconds: Int
+
+        init(url: URL) throws {
+            var attributes = stat()
+            guard url.path.withCString({ stat($0, &attributes) }) == 0 else {
+                throw CocoaError(.fileReadUnknown)
+            }
+
+            self.url = url
+            size = attributes.st_size
+            inode = attributes.st_ino
+            modifiedSeconds = attributes.st_mtimespec.tv_sec
+            modifiedNanoseconds = attributes.st_mtimespec.tv_nsec
+            changedSeconds = attributes.st_ctimespec.tv_sec
+            changedNanoseconds = attributes.st_ctimespec.tv_nsec
+        }
+    }
+
+    private struct Verification: Hashable, Sendable {
+        let first: Identity
+        let second: Identity
+    }
+
+    private struct Records: Sendable {
+        var fingerprints = [Identity: PixelFingerprint]()
+        var verified = Set<Verification>()
+        var decoded = 0
+    }
+
+    private let records = Mutex(Records())
+
+    fileprivate var decodedImageCount: Int {
+        records.withLock { $0.decoded }
+    }
+
+    fileprivate func retain(sources: Set<URL>) {
+        records.withLock { records in
+            records.fingerprints = records.fingerprints.filter { sources.contains($0.key.url) }
+            records.verified = records.verified.filter { sources.contains($0.first.url) && sources.contains($0.second.url) }
+        }
+    }
+
+    fileprivate func fingerprint(url: URL, context: CIContext) throws -> PixelFingerprint {
+        let identity = try Identity(url: url)
+        if let fingerprint = records.withLock({ $0.fingerprints[identity] }) {
+            return fingerprint
+        }
+        return try fingerprint(data: Data(contentsOf: url), identity: identity, context: context)
+    }
+
+    fileprivate func prepareFingerprint(url: URL) async throws -> PixelFingerprint {
+        try Task.checkCancellation()
+        let identity = try Identity(url: url)
+        if let fingerprint = records.withLock({ $0.fingerprints[identity] }) {
+            return fingerprint
+        }
+        let data = try Data(contentsOf: url)
+        let bytes = autoreleasepool {
+            (try? NormalizedImage.decodedByteCount(data: data)) ?? ImageDecodeBudget.capacity
+        }
+        await decodeBudget.acquire(bytes: bytes)
+        // Queued cancellations still retire their reservation after the active decoder
+        // finishes. No cancelled waiter starts a decode or leaves a permit stranded.
+        let result = Result {
+            try Task.checkCancellation()
+            return try autoreleasepool { try fingerprint(data: data, identity: identity, context: context) }
+        }
+        await decodeBudget.release(bytes: bytes)
+        return try result.get()
+    }
+
+    private func fingerprint(data: Data, identity: Identity, context: CIContext) throws -> PixelFingerprint {
+        let url = identity.url
+        let fingerprint = try PixelFingerprint(pixels(data: data, context: context))
+        guard try identity == Identity(url: url) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+
+        records.withLock { records in
+            records.fingerprints = records.fingerprints.filter { $0.key.url != url }
+            records.verified = records.verified.filter { $0.first.url != url && $0.second.url != url }
+            records.fingerprints[identity] = fingerprint
+        }
+        return fingerprint
+    }
+
+    fileprivate func equal(_ first: URL, _ second: URL, context: CIContext) throws -> Bool {
+        let key = try Verification(first: Identity(url: first), second: Identity(url: second))
+        if records.withLock({ $0.verified.contains(key) }) {
+            return true
+        }
+        let equal = try pixels(url: first, context: context) == pixels(url: second, context: context)
+        if equal, try key.first == Identity(url: first), try key.second == Identity(url: second) {
+            records.withLock { _ = $0.verified.insert(key) }
+        }
+        return equal
+    }
+
+    private let entries = Mutex<[Entry]>([])
+
+    fileprivate func pixels(url: URL, context: CIContext) throws -> DecodedPixels {
+        try pixels(data: Data(contentsOf: url), context: context)
+    }
+
+    private func pixels(data: Data, context: CIContext) throws -> DecodedPixels {
+        let digest = SHA256.hash(data: data)
+        if let cached = entries.withLock({ entries -> DecodedPixels? in
+            guard let index = entries.firstIndex(where: { $0.digest == digest && $0.source == data }) else {
+                return nil
+            }
+
+            let entry = entries.remove(at: index)
+            entries.append(entry)
+            return entry.pixels
+        }) {
+            return cached
+        }
+        records.withLock { $0.decoded += 1 }
+        let pixels = try DecodedPixels(image: NormalizedImage(data: data), context: context)
+        let entry = Entry(digest: digest, pixels: pixels, source: data)
+        if entry.cost <= 32 * 1024 * 1024 {
+            entries.withLock { entries in
+                entries.removeAll { $0.digest == digest }
+                while entries.isEmpty == false, entries.count >= 128 || entries.reduce(0, { $0 + $1.cost }) + entry.cost > 32 * 1024 * 1024 {
+                    entries.removeFirst()
+                }
+                entries.append(entry)
+            }
+        }
+        return pixels
+    }
+}
+
 // MARK: - CatalogComparison
 
 enum CatalogComparison {
-    static func run(root: URL, incoming: [URL], publish: @Sendable (ScanSnapshot) async -> Void) async {
+    private struct PreparedRepresentation: Sendable {
+        let id: String
+        let url: URL
+        let label: String
+        let fingerprint: PixelFingerprint?
+    }
+
+    private struct PreparedEntry: Sendable {
+        let url: URL
+        var representations = [PreparedRepresentation]()
+        var skipped = 0
+    }
+
+    private actor PreparationWorker {
+        private let root: URL
+        private let cache: CatalogComparisonCache
+        private let rules: ProjectIgnoreRules
+
+        init(root: URL, cache: CatalogComparisonCache) {
+            self.root = root
+            self.cache = cache
+            rules = ProjectIgnoreRules(root: root)
+        }
+
+        func prepare(entry: URL) async -> PreparedEntry {
+            var prepared = PreparedEntry(url: entry)
+            func withinRoot(_ url: URL) -> Bool {
+                let path = ProjectFileLocation.canonical(url).path
+                return path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/")
+            }
+            do {
+                let contentsURL = entry.appendingPathComponent("Contents.json")
+                guard withinRoot(contentsURL), try contentsURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+                    throw CocoaError(.fileReadNoPermission)
+                }
+
+                let contents = try JSONDecoder().decode(CatalogContents.self, from: Data(contentsOf: contentsURL))
+                for (index, image) in contents.images.enumerated() {
+                    if Task.isCancelled {
+                        return prepared
+                    }
+                    guard let filename = image.filename else {
+                        continue
+                    }
+
+                    let url = entry.appendingPathComponent(filename)
+                    guard url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
+                        prepared.skipped += 1
+                        continue
+                    }
+
+                    if try rules.ignores(url, isDirectory: false) {
+                        continue
+                    }
+                    guard withinRoot(url), (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
+                        prepared.skipped += 1
+                        continue
+                    }
+
+                    let fingerprint = try? await cache.prepareFingerprint(url: url)
+                    if fingerprint == nil {
+                        prepared.skipped += 1
+                    }
+                    prepared.representations.append(PreparedRepresentation(id: url.path + "#" + String(index), url: url,
+                                                                           label: image.label, fingerprint: fingerprint))
+                }
+            } catch {
+                prepared.representations = []
+                prepared.skipped += 1
+            }
+            return prepared
+        }
+    }
+
+    static func run(root: URL, incoming: [URL], cache: CatalogComparisonCache = CatalogComparisonCache(), inventory: ProjectCatalogInventory? = nil, publish: @Sendable (ScanSnapshot) async -> Void) async {
+        let initialDecodes = cache.decodedImageCount
         var snapshot = ScanSnapshot(results: incoming.map { IncomingResult(url: $0) })
-        let boundary = root.resolvingSymlinksInPath().standardizedFileURL
+        let boundary = ProjectFileLocation.canonical(root)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: boundary.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             snapshot.error = "The project folder is unavailable. Choose it again."
             await publish(snapshot); return
         }
 
-        func withinRoot(_ url: URL) -> Bool {
-            let path = url.resolvingSymlinksInPath().standardizedFileURL.path
-            return path.hasPrefix(boundary.path.hasSuffix("/") ? boundary.path : boundary.path + "/")
-        }
-        let ignoreRules = ProjectIgnoreRules(root: boundary)
-        var entries = [URL]()
-        guard let enumerator = FileManager.default.enumerator(at: boundary,
-                                                              includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey], options: [],
-                                                              errorHandler: { _, _ in snapshot.skipped += 1; return true })
-        else {
-            snapshot.error = "The project folder could not be read. Choose it again."
-            await publish(snapshot); return
+        let inventory =
+            if let inventory, inventory.root.path == boundary.path {
+                inventory
+            } else {
+                ProjectCatalogInventory.read(boundary, observingChanges: false)
+            }
+        guard Task.isCancelled == false else {
+            return
         }
 
-        while let url = enumerator.nextObject() as? URL {
-            if Task.isCancelled {
-                return
-            }
-            let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
-            if values?.isSymbolicLink == true || url.lastPathComponent == ".git" {
-                if values?.isDirectory == true {
-                    enumerator.skipDescendants()
-                }
-                continue
-            }
-            do {
-                if try ignoreRules.ignores(url, isDirectory: values?.isDirectory == true) {
-                    if values?.isDirectory == true {
-                        enumerator.skipDescendants()
-                    }
-                    continue
-                }
-                if url.pathExtension == "imageset", values?.isDirectory == true {
-                    enumerator.skipDescendants()
-                    var parent = url.deletingLastPathComponent()
-                    while parent.path != boundary.path, parent.pathExtension != "xcassets" {
-                        parent.deleteLastPathComponent()
-                    }
-                    if parent.pathExtension == "xcassets",
-                       try ignoreRules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) == false
-                    {
-                        entries.append(url)
-                    }
-                }
-            } catch {
-                snapshot.error = "The project's Git ignore rules could not be read. Check folder access and try again."
-                await publish(snapshot); return
-            }
-            if entries.count != snapshot.discovered {
-                snapshot.discovered = entries.count
-                await publish(snapshot)
-            }
+        snapshot.skipped = inventory.skipped
+        snapshot.error = inventory.error
+        snapshot.discovered = inventory.entries.count
+        await publish(snapshot)
+        guard inventory.error == nil else {
+            return
         }
-        let context = CIContext(options: [.useSoftwareRenderer: true, .outputPremultiplied: false,
-                                          .workingFormat: CIFormat.RGBAf,
-                                          .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
+
+        let entries = inventory.entries
+        let context = cache.context
+        var sources = Set(incoming)
         var incomingFingerprints = [PixelFingerprint?]()
         var buckets = [PixelFingerprint: [ContentBucket]]()
         snapshot.phase = "Reading incoming images…"
@@ -186,7 +447,7 @@ enum CatalogComparison {
             await publish(snapshot)
             do {
                 try incomingFingerprints.append(autoreleasepool {
-                    try PixelFingerprint(DecodedPixels(url: incoming[index], context: context))
+                    try cache.fingerprint(url: incoming[index], context: context)
                 })
             } catch {
                 snapshot.results[index].status = .unreadable
@@ -201,52 +462,51 @@ enum CatalogComparison {
         }
         snapshot.phase = "Comparing image assets…"
         await publish(snapshot)
-        for entry in entries.sorted(by: { $0.path < $1.path }) {
+        // Each batch bounds both active decoders and completed work waiting for ordered assembly.
+        let parallelism = min(4, max(1, ProcessInfo.processInfo.activeProcessorCount))
+        let workers = (0 ..< parallelism).map { _ in PreparationWorker(root: boundary, cache: cache) }
+        for start in stride(from: 0, to: entries.count, by: parallelism) {
             if Task.isCancelled {
                 return
             }
-            do {
-                let contentsURL = entry.appendingPathComponent("Contents.json")
-                guard withinRoot(contentsURL), try contentsURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
-                    throw CocoaError(.fileReadNoPermission)
+            let end = min(start + parallelism, entries.count)
+            let prepared = await withTaskGroup(of: PreparedEntry.self, returning: [PreparedEntry].self) { group in
+                for index in start ..< end {
+                    let entry = entries[index]
+                    let worker = workers[index - start]
+                    group.addTask {
+                        await worker.prepare(entry: entry)
+                    }
                 }
-
-                let contents = try JSONDecoder().decode(CatalogContents.self, from: Data(contentsOf: contentsURL))
+                var batch = [PreparedEntry]()
+                for await entry in group {
+                    batch.append(entry)
+                }
+                return batch.sorted { $0.url.path < $1.url.path }
+            }
+            for preparedEntry in prepared {
+                if Task.isCancelled {
+                    return
+                }
+                let entry = preparedEntry.url
+                snapshot.skipped += preparedEntry.skipped
                 var variants = [(id: String, url: URL, label: String, matchingInputs: Set<Int>)]()
                 var entryBuckets = [(fingerprint: PixelFingerprint, index: Int, representationID: String)]()
-                for (imageIndex, image) in contents.images.enumerated() {
-                    guard let filename = image.filename else {
-                        continue
-                    }
-
-                    let url = entry.appendingPathComponent(filename)
-                    guard url.deletingLastPathComponent().standardizedFileURL == entry.standardizedFileURL else {
-                        snapshot.skipped += 1; continue
-                    }
-
-                    if try ignoreRules.ignores(url, isDirectory: false) {
-                        continue
-                    }
-                    guard withinRoot(url),
-                          (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
-                    else {
-                        snapshot.skipped += 1; continue
-                    }
-
+                for representation in preparedEntry.representations {
                     if Task.isCancelled {
                         return
                     }
-                    let representationID = url.path + "#" + String(imageIndex)
-                    let matchingInputs: Set<Int>? = autoreleasepool { () -> Set<Int>? in
-                        guard let normalized = try? NormalizedImage(url: url) else {
-                            return nil
+                    let url = representation.url
+                    let representationID = representation.id
+                    sources.insert(url)
+                    let matchingInputs: Set<Int> = autoreleasepool {
+                        guard let fingerprint = representation.fingerprint else {
+                            return []
                         }
 
-                        let pixels = DecodedPixels(image: normalized, context: context)
-                        let fingerprint = PixelFingerprint(pixels)
                         var contentBuckets = buckets[fingerprint, default: []]
                         let bucketIndex = contentBuckets.firstIndex {
-                            (try? DecodedPixels(url: $0.reference, context: context)) == pixels
+                            (try? cache.equal($0.reference, url, context: context)) == true
                         } ?? contentBuckets.count
                         if bucketIndex == contentBuckets.count {
                             contentBuckets.append(ContentBucket(reference: url))
@@ -259,13 +519,10 @@ enum CatalogComparison {
                                 return false
                             }
 
-                            return (try? DecodedPixels(url: incoming[index], context: context)) == pixels
+                            return (try? cache.equal(incoming[index], url, context: context)) == true
                         })
                     }
-                    if matchingInputs == nil {
-                        snapshot.skipped += 1
-                    }
-                    variants.append((representationID, url, image.label, matchingInputs ?? []))
+                    variants.append((representationID, url, representation.label, matchingInputs))
                 }
                 let location = String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1))
                 func candidate(matchingIDs: Set<String>) -> AssetCandidate {
@@ -307,8 +564,13 @@ enum CatalogComparison {
                     let matchingIDs = Set(variants.filter { $0.matchingInputs.contains(index) }.map(\.id))
                     snapshot.results[index].candidates.append(candidate(matchingIDs: matchingIDs))
                 }
-            } catch { snapshot.skipped += 1 }
-            snapshot.compared += 1
+                snapshot.compared += 1
+                await publish(snapshot)
+            }
+        }
+        if Task.isCancelled == false {
+            cache.retain(sources: sources)
+            snapshot.imageDecodes = cache.decodedImageCount - initialDecodes
             await publish(snapshot)
         }
     }

@@ -272,6 +272,7 @@ private struct SessionProgress: View {
                     .popover(isPresented: $showLimitations) {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             Text("Exact image comparison").font(.headline)
+                            Text("Catalog changes update results automatically while this project is open.")
                             Text("Equal content does not mean assets are interchangeable or safe to delete. Project files are read only.")
                             Text("Exact matches only. Resized copies and images with changed transparent padding are not detected. No matches does not guarantee an image is safe to import.")
                         }
@@ -295,9 +296,12 @@ private struct SessionProgress: View {
                 } else {
                     ProgressView().controlSize(.small)
                 }
-                Text("Results are provisional · \(session.decoded, format: .number) / \(session.results.count, format: .number) incoming images processed")
+                Text(session.results.isEmpty ? String(localized: "Results are provisional while the catalog scan runs.") : String(localized: "Results are provisional · \(session.decoded.formatted()) / \(session.results.count.formatted()) incoming images processed"))
                     .font(.caption)
                     .monospacedDigit()
+            }
+            if let error = session.observationError {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
             }
             if let error = session.error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
