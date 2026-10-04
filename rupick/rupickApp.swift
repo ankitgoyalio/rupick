@@ -2,10 +2,14 @@ import SwiftUI
 
 @main
 struct rupickApp: App {
+    @State private var workspace = ProjectWorkspace()
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup(for: URL.self) { $project in
+            ContentView(project: $project)
+                .environment(workspace)
         }
+        .restorationBehavior(.disabled)
         .defaultSize(width: 480, height: 600)
         .windowResizability(.contentSize)
     }

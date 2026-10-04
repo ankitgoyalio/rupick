@@ -5,7 +5,11 @@ import UniformTypeIdentifiers
 // MARK: - ContentView
 
 struct ContentView: View {
+    @Binding var project: URL?
+    @Environment(ProjectWorkspace.self) private var workspace
+    @Environment(\.openWindow) private var openWindow
     @State private var session = ProjectSession()
+    @State private var projectError: String?
     @State private var dropTargeted = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -19,7 +23,7 @@ struct ContentView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 if session.root == nil {
-                    WelcomeView(notice: session.notice, openProject: pickProject)
+                    WelcomeView(notice: projectError ?? session.notice, openProject: pickProject, recents: workspace.recents, reopen: reopenProject)
                 } else {
                     NavigationSplitView {
                         VStack(alignment: .leading) {
@@ -88,7 +92,7 @@ struct ContentView: View {
                                                        description: Text("Choose Images to compare incoming images with this project."))
                             }
                         } else {
-                            WelcomeView(notice: session.notice, openProject: pickProject)
+                            WelcomeView(notice: projectError ?? session.notice, openProject: pickProject, recents: workspace.recents, reopen: reopenProject)
                         }
                     }
                     .id(session.id)
@@ -105,7 +109,8 @@ struct ContentView: View {
                         Button("Open Project…", systemImage: "folder") { pickProject() }
                             .accessibilityIdentifier("openProject")
                             .keyboardShortcut("o")
-                            .help("Choose a project folder and discover its image assets.")
+                            .help("Open a project in its own window and discover its image assets.")
+                        recentProjectsMenu
                         Button("Choose Images…", systemImage: "photo.badge.plus") { pickImages() }
                             .accessibilityIdentifier("chooseImages")
                             .keyboardShortcut("i")
@@ -186,7 +191,37 @@ struct ContentView: View {
                 }
             }
         #endif
-            .onDisappear { session.close() }
+            .onChange(of: project, initial: true) { _, identity in
+                guard let identity else {
+                    return
+                }
+
+                do {
+                    let restored = try workspace.restore(identity)
+                    session = workspace.session(for: restored)
+                    if project != restored {
+                        project = restored
+                    }
+                } catch {
+                    projectError = "Project unavailable. Choose its folder again to restore access."
+                    project = nil
+                }
+            }
+            .onDisappear {
+                if let project {
+                    workspace.close(project, session: session)
+                } else {
+                    session.close()
+                }
+            }
+            .alert("Could Not Open Project", isPresented: Binding(get: { projectError != nil && session.root != nil }, set: {
+                if $0 == false {
+                    projectError = nil
+                }
+            })) {
+                Button("OK") { projectError = nil }
+            } message: { Text(projectError ?? "") }
+            .navigationTitle(session.root?.lastPathComponent ?? "rupick")
     }
 
     private var duplicateStatus: String {
@@ -203,7 +238,6 @@ struct ContentView: View {
     }
 
     private func pickProject() {
-        let sessionID = session.id
         let panel = NSOpenPanel()
         panel.title = "Choose a project folder"
         panel.canChooseDirectories = true
@@ -214,7 +248,30 @@ struct ContentView: View {
                 return
             }
 
-            session.open(root: url, replacing: sessionID)
+            routeProject { try workspace.open(url) }
+        }
+    }
+
+    private var recentProjectsMenu: some View {
+        RecentProjectsMenu(recents: workspace.recents, reopen: reopenProject)
+    }
+
+    private func reopenProject(_ recent: RecentProject) {
+        routeProject { try workspace.reopen(recent) }
+    }
+
+    private func routeProject(_ resolve: () throws -> URL) {
+        let alreadyOpen = workspace.openProjects
+        do {
+            let identity = try resolve()
+            projectError = nil
+            if project == nil, alreadyOpen.contains(identity) == false {
+                project = identity
+            } else {
+                openWindow(value: identity)
+            }
+        } catch {
+            projectError = "Project unavailable. Choose its folder again to restore access."
         }
     }
 
@@ -323,6 +380,8 @@ private struct SessionProgress: View {
 private struct WelcomeView: View {
     let notice: String?
     let openProject: () -> Void
+    let recents: [RecentProject]
+    let reopen: (RecentProject) -> Void
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
     }
@@ -353,7 +412,10 @@ private struct WelcomeView: View {
                 .controlSize(.large)
                 .keyboardShortcut("o")
                 .accessibilityIdentifier("openProject")
-                .help("Choose a project folder and discover its image assets.")
+                .help("Open a project in its own window and discover its image assets.")
+            if recents.isEmpty == false {
+                RecentProjectsMenu(recents: recents, reopen: reopen)
+            }
             VStack(spacing: 8) {
                 Text("Find matching images").font(.headline)
                 Text("Open a project folder to find exact duplicates in its image assets. Then compare incoming images with the project.")
@@ -374,6 +436,25 @@ private struct WelcomeView: View {
         .frame(maxWidth: 360)
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - RecentProjectsMenu
+
+private struct RecentProjectsMenu: View {
+    let recents: [RecentProject]
+    let reopen: (RecentProject) -> Void
+
+    var body: some View {
+        Menu("Recent Projects", systemImage: "clock") {
+            ForEach(recents) { recent in
+                Button { reopen(recent) } label: {
+                    Text("\(recent.name) · \(recent.id.deletingLastPathComponent().path)")
+                }
+            }
+        }
+        .disabled(recents.isEmpty)
+        .accessibilityIdentifier("recentProjects")
     }
 }
 

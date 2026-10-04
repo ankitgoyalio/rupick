@@ -225,6 +225,71 @@ final class rupickUITests: XCTestCase {
     }
 
     @MainActor
+    func testIndependentProjectWindowsAndRecentReopening() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-windows-\(UUID().uuidString)")
+        let leftRoot = base.appendingPathComponent("Left")
+        let rightRoot = base.appendingPathComponent("Right")
+        defer { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try copyFixture(to: leftRoot)
+        try copyFixture(to: rightRoot)
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(leftRoot.path, in: app)
+        let left = app.windows["Left"]
+        XCTAssertTrue(left.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        left.buttons["chooseImages"].click()
+        choose(leftRoot.appendingPathComponent("Incoming/renamed.png").path, in: app)
+        XCTAssertTrue(left.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let leftIncoming = left.descendants(matching: .any).matching(identifier: "incoming-renamed.png").firstMatch
+        XCTAssertTrue(leftIncoming.waitForExistence(timeout: 30))
+        leftIncoming.click()
+        XCTAssertTrue(left.buttons["keepAsNew"].waitForExistence(timeout: 30))
+        left.buttons["keepAsNew"].click()
+        left.buttons["openProject"].click()
+        choose(rightRoot.path, in: app)
+        let right = app.windows["Right"]
+        XCTAssertTrue(right.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertFalse(right.staticTexts["renamed.png"].exists)
+        right.buttons["chooseImages"].click()
+        choose(rightRoot.appendingPathComponent("Incoming/new.png").path, in: app)
+        XCTAssertTrue(right.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let rightIncoming = right.descendants(matching: .any).matching(identifier: "incoming-new.png").firstMatch
+        XCTAssertTrue(rightIncoming.waitForExistence(timeout: 30))
+        rightIncoming.click()
+        XCTAssertTrue(right.staticTexts["Incomplete search · 0 matches so far"].waitForExistence(timeout: 30))
+        XCTAssertFalse(left.staticTexts["new.png"].exists)
+        XCTAssertTrue(left.staticTexts["reviewOutcome"].exists)
+        right.buttons["openProject"].click()
+        choose(leftRoot.path, in: app)
+        XCTAssertEqual(app.windows.matching(identifier: "Left").count, 1)
+        XCTAssertTrue(left.buttons["keepAsNew"].isHittable)
+        left.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(right.exists)
+        XCTAssertTrue(right.staticTexts["new.png"].exists)
+        right.descendants(matching: .any)["recentProjects"].firstMatch.click()
+        app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "Left")).firstMatch.click()
+        XCTAssertTrue(left.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertFalse(left.staticTexts["renamed.png"].exists)
+        XCTAssertTrue(right.staticTexts["new.png"].exists)
+        left.buttons[XCUIIdentifierCloseWindow].click()
+        app.terminate()
+        app.launch()
+        app.descendants(matching: .any)["recentProjects"].firstMatch.click()
+        app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "Right")).firstMatch.click()
+        XCTAssertTrue(app.windows["Right"].staticTexts["Search complete"].waitForExistence(timeout: 30))
+        try FileManager.default.removeItem(at: leftRoot)
+        app.windows["Right"].descendants(matching: .any)["recentProjects"].firstMatch.click()
+        app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "Left")).firstMatch.click()
+        XCTAssertTrue(app.alerts["Could Not Open Project"].waitForExistence(timeout: 10))
+        app.alerts.buttons["OK"].click()
+        XCTAssertTrue(app.windows["Right"].staticTexts["projectHeading"].exists)
+        XCTAssertEqual(app.windows.matching(identifier: "Left").count, 0)
+    }
+
+    @MainActor
     func testProjectDuplicateGroupsWithoutIncomingImages() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-duplicates-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
