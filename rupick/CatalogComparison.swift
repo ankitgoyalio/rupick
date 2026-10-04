@@ -13,7 +13,36 @@ private struct NormalizedImage {
     let width: Int
     let height: Int
 
+    /// Inspect the same source bytes that will be decoded. Reject oversized headers
+    /// before ImageIO allocates a bitmap, and reserve the floating-point output size.
+    static func decodedByteCount(data: Data) throws -> Int {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source),
+              [UTType.png.identifier, UTType.jpeg.identifier].contains(type as String),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = (properties[kCGImagePropertyPixelWidth as String] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight as String] as? NSNumber)?.intValue
+        else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        guard width > 0, height > 0, width <= 8192, height <= 8192,
+              width * height <= 16_777_216
+        else {
+            throw CocoaError(.fileReadTooLarge)
+        }
+
+        return width * height * 4 * MemoryLayout<Float>.size
+    }
+
+    static func makeContext() -> CIContext {
+        CIContext(options: [.useSoftwareRenderer: true, .outputPremultiplied: false,
+                            .workingFormat: CIFormat.RGBAf,
+                            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
+    }
+
     init(data: Data) throws {
+        _ = try Self.decodedByteCount(data: data)
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let type = CGImageSourceGetType(source),
               [UTType.png.identifier, UTType.jpeg.identifier].contains(type as String),
@@ -31,6 +60,42 @@ private struct NormalizedImage {
               width * height <= 16_777_216
         else {
             throw CocoaError(.fileReadTooLarge)
+        }
+    }
+}
+
+// MARK: - ImageDecodeBudget
+
+/// Bound concurrent normalized buffers across retiring and replacement scans.
+/// Framework working buffers and source bytes are additional to this allowance.
+private actor ImageDecodeBudget {
+    static let capacity = 128 * 1024 * 1024
+    private struct Waiter {
+        let bytes: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private var used = 0
+    private var waiters = [Waiter]()
+
+    func acquire(bytes: Int) async {
+        // One supported image above the allowance can run alone.
+        let bytes = min(bytes, Self.capacity)
+        if waiters.isEmpty, used + bytes <= Self.capacity {
+            used += bytes
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(Waiter(bytes: bytes, continuation: continuation))
+        }
+    }
+
+    func release(bytes: Int) {
+        used -= min(bytes, Self.capacity)
+        while let first = waiters.first, used + first.bytes <= Self.capacity {
+            waiters.removeFirst()
+            used += first.bytes
+            first.continuation.resume()
         }
     }
 }
@@ -110,6 +175,10 @@ private struct ContentBucket {
 /// Per-session cache. Byte identity handles atomic replacement and preserved timestamps.
 /// Only immutable pixels cross workers; both entry count and decoded memory are bounded.
 final class CatalogComparisonCache: Sendable {
+    // CIContext is immutable and Sendable in the SDK and supports concurrent rendering.
+    // Share its working resources instead of allocating a renderer for every worker.
+    fileprivate let context = NormalizedImage.makeContext()
+    private let decodeBudget = ImageDecodeBudget()
     private struct Entry: Sendable {
         let digest: SHA256.Digest
         let pixels: DecodedPixels
@@ -173,7 +242,33 @@ final class CatalogComparisonCache: Sendable {
         if let fingerprint = records.withLock({ $0.fingerprints[identity] }) {
             return fingerprint
         }
-        let fingerprint = try PixelFingerprint(pixels(url: url, context: context))
+        return try fingerprint(data: Data(contentsOf: url), identity: identity, context: context)
+    }
+
+    fileprivate func prepareFingerprint(url: URL) async throws -> PixelFingerprint {
+        try Task.checkCancellation()
+        let identity = try Identity(url: url)
+        if let fingerprint = records.withLock({ $0.fingerprints[identity] }) {
+            return fingerprint
+        }
+        let data = try Data(contentsOf: url)
+        let bytes = autoreleasepool {
+            (try? NormalizedImage.decodedByteCount(data: data)) ?? ImageDecodeBudget.capacity
+        }
+        await decodeBudget.acquire(bytes: bytes)
+        // Queued cancellations still retire their reservation after the active decoder
+        // finishes. No cancelled waiter starts a decode or leaves a permit stranded.
+        let result = Result {
+            try Task.checkCancellation()
+            return try autoreleasepool { try fingerprint(data: data, identity: identity, context: context) }
+        }
+        await decodeBudget.release(bytes: bytes)
+        return try result.get()
+    }
+
+    private func fingerprint(data: Data, identity: Identity, context: CIContext) throws -> PixelFingerprint {
+        let url = identity.url
+        let fingerprint = try PixelFingerprint(pixels(data: data, context: context))
         guard try identity == Identity(url: url) else {
             throw CocoaError(.fileReadUnknown)
         }
@@ -201,7 +296,10 @@ final class CatalogComparisonCache: Sendable {
     private let entries = Mutex<[Entry]>([])
 
     fileprivate func pixels(url: URL, context: CIContext) throws -> DecodedPixels {
-        let data = try Data(contentsOf: url)
+        try pixels(data: Data(contentsOf: url), context: context)
+    }
+
+    private func pixels(data: Data, context: CIContext) throws -> DecodedPixels {
         let digest = SHA256.hash(data: data)
         if let cached = entries.withLock({ entries -> DecodedPixels? in
             guard let index = entries.firstIndex(where: { $0.digest == digest && $0.source == data }) else {
@@ -250,7 +348,6 @@ enum CatalogComparison {
         private let root: URL
         private let cache: CatalogComparisonCache
         private let rules: ProjectIgnoreRules
-        private let context = makeContext()
 
         init(root: URL, cache: CatalogComparisonCache) {
             self.root = root
@@ -258,7 +355,7 @@ enum CatalogComparison {
             rules = ProjectIgnoreRules(root: root)
         }
 
-        func prepare(entry: URL) -> PreparedEntry {
+        func prepare(entry: URL) async -> PreparedEntry {
             var prepared = PreparedEntry(url: entry)
             func withinRoot(_ url: URL) -> Bool {
                 let path = ProjectFileLocation.canonical(url).path
@@ -293,7 +390,7 @@ enum CatalogComparison {
                         continue
                     }
 
-                    let fingerprint = autoreleasepool { try? cache.fingerprint(url: url, context: context) }
+                    let fingerprint = try? await cache.prepareFingerprint(url: url)
                     if fingerprint == nil {
                         prepared.skipped += 1
                     }
@@ -306,12 +403,6 @@ enum CatalogComparison {
             }
             return prepared
         }
-    }
-
-    private static func makeContext() -> CIContext {
-        CIContext(options: [.useSoftwareRenderer: true, .outputPremultiplied: false,
-                            .workingFormat: CIFormat.RGBAf,
-                            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!])
     }
 
     static func run(root: URL, incoming: [URL], cache: CatalogComparisonCache = CatalogComparisonCache(), inventory: ProjectCatalogInventory? = nil, publish: @Sendable (ScanSnapshot) async -> Void) async {
@@ -343,7 +434,7 @@ enum CatalogComparison {
         }
 
         let entries = inventory.entries
-        let context = makeContext()
+        let context = cache.context
         var sources = Set(incoming)
         var incomingFingerprints = [PixelFingerprint?]()
         var buckets = [PixelFingerprint: [ContentBucket]]()
