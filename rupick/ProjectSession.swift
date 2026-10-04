@@ -453,14 +453,20 @@ final class ProjectSession {
         }
         let observationID = UUID()
         incomingObservationID = observationID
-        incomingObservation = dependencies.incomingObservation.start(incoming) { [weak self] urls in
+        incomingObservation = dependencies.incomingObservation.start(incoming) { [weak self] changes in
             guard let self, incomingObservationID == observationID else {
                 return
             }
 
-            for url in urls {
-                reviews[url]?.invalidateIncoming()
+            // A scan may already include an event delivered after its baseline was read.
+            guard changes.contains(where: { change in
+                results.first(where: { $0.url == change.url })?.contentVersion != change.contentVersion
+            }) else {
+                return
             }
+
+            // Only the replacement scan can establish the current content version.
+            // Reject obsolete work now, and reconcile decisions with that scan's results.
             catalogChanged()
         }
         let token = UUID()

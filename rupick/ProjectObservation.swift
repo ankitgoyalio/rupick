@@ -296,7 +296,7 @@ final class ProjectObservation {
 /// Watches explicitly chosen files, including files outside the project and ignored paths.
 /// Metadata checks avoid decoding images and detect atomic replacements and deletion.
 struct IncomingObservationAdapter: Sendable {
-    let start: @MainActor @Sendable ([URL], @escaping @MainActor @Sendable ([URL]) -> Void) -> IncomingObservation?
+    let start: @MainActor @Sendable ([URL], @escaping @MainActor @Sendable ([IncomingFileChange]) -> Void) -> IncomingObservation?
 
     static let disabled = Self { _, _ in nil }
     static let native = Self { urls, changed in
@@ -321,11 +321,11 @@ struct IncomingObservationAdapter: Sendable {
             var previous = await baseline.value
             while Task.isCancelled == false {
                 do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
-                var updates = [URL]()
+                var updates = [IncomingFileChange]()
                 for url in urls where previous[url]?.metadata != version(of: url) {
                     let current = FileState.read(url)
                     if previous[url]?.content != current.content {
-                        updates.append(url)
+                        updates.append(IncomingFileChange(url: url, contentVersion: current.content?.description))
                     }
                     previous[url] = current
                 }
@@ -372,4 +372,11 @@ struct IncomingObservation: Sendable {
     func cancel() {
         stop()
     }
+}
+
+// MARK: - IncomingFileChange
+
+struct IncomingFileChange: Sendable {
+    let url: URL
+    let contentVersion: String?
 }

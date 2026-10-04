@@ -130,9 +130,9 @@ struct ProjectLifecycleTests {
         await session.close().value
     }
 
-    @Test(arguments: [false, true]) func incomingObservationInvalidatesDecisionsBeforeObsoleteWorkCompletes(reuse: Bool) async {
+    @Test(arguments: [false, true]) func incomingObservationReconcilesDecisionsAndRejectsObsoleteWork(reuse: Bool) async {
         let scan = ControlledScan()
-        var changed: (@MainActor @Sendable ([URL]) -> Void)?
+        var changed: (@MainActor @Sendable ([IncomingFileChange]) -> Void)?
         let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, _, publish in
             await scan.run(root: root, incoming: incoming, publish: publish)
         }, incomingObservation: IncomingObservationAdapter { _, callback in
@@ -140,7 +140,7 @@ struct ProjectLifecycleTests {
             return nil
         }))
         let candidate = group("selected").members[0]
-        let result = IncomingResult(url: first, candidates: [candidate])
+        let result = IncomingResult(url: first, candidates: [candidate], contentVersion: "original")
         let opening = session.open(root: root, incoming: [first])
         await scan.waitForRequests(1)
         await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
@@ -152,13 +152,12 @@ struct ProjectLifecycleTests {
         }
         let obsolete = session.refresh(incoming: [first])
         await scan.waitForRequests(2)
-        changed?([first])
-        #expect(session.review(for: first).outcome == nil)
-        #expect(session.review(for: first).notice == .incomingChanged)
+        changed?([IncomingFileChange(url: first, contentVersion: "changed")])
+        #expect(session.state == .running)
         await scan.publish(1, snapshot: ScanSnapshot(results: [result]))
-        #expect(session.review(for: first).outcome == nil)
+        #expect(session.state == .running)
         await scan.waitForRequests(3)
-        await scan.complete(2, snapshot: ScanSnapshot(results: [IncomingResult(url: first)]))
+        await scan.complete(2, snapshot: ScanSnapshot(results: [IncomingResult(url: first, contentVersion: "changed")]))
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while session.isRunning, ContinuousClock.now < deadline {
             await Task.yield()
@@ -170,8 +169,46 @@ struct ProjectLifecycleTests {
         #expect(session.review(for: first).outcome == nil)
         let retiredCallback = changed
         await session.close().value
-        retiredCallback?([first])
+        retiredCallback?([IncomingFileChange(url: first, contentVersion: "retired")])
         #expect(session.state == .idle)
+    }
+
+    @Test(arguments: [false, true]) func delayedIncomingEventPreservesDecisionForAlreadyComparedContent(reuse: Bool) async {
+        let scan = ControlledScan()
+        var changed: (@MainActor @Sendable ([IncomingFileChange]) -> Void)?
+        let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, _, publish in
+            await scan.run(root: root, incoming: incoming, publish: publish)
+        }, incomingObservation: IncomingObservationAdapter { _, callback in
+            changed = callback
+            return nil
+        }))
+        let candidate = group("selected").members[0]
+        let result = IncomingResult(url: first, candidates: [candidate], contentVersion: "current")
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await opening.value
+        if reuse {
+            #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: candidate.representations[0].id))
+        } else {
+            session.keepAsNew(first)
+        }
+        let outcome = session.review(for: first).outcome
+        changed?([IncomingFileChange(url: first, contentVersion: "current")])
+        #expect(session.state == .complete)
+        #expect(session.review(for: first).outcome == outcome)
+        #expect(session.review(for: first).notice == nil)
+        changed?([IncomingFileChange(url: first, contentVersion: "older-observation")])
+        await scan.waitForRequests(2)
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result]))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while session.isRunning, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(session.state == .complete)
+        #expect(session.review(for: first).outcome == outcome)
+        #expect(session.review(for: first).notice == nil)
+        await session.close().value
     }
 
     @Test func reopeningSameFolderStartsFreshAndRejectsOldIntake() async throws {
