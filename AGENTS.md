@@ -2,20 +2,10 @@
 
 Read the linked `SKILL.md` when its trigger applies; load supporting references as needed. Skills marked **explicit** require user invocation.
 
-### UI design and copy
+### SwiftUI and interface copy
 
-- [apple-design](.agents/skills/apple-design/SKILL.md): Apple-style gestures, materials, typography, and physical motion.
-- [emil-design-eng](.agents/skills/emil-design-eng/SKILL.md): UI polish and component design.
+- [swiftui-expert-skill](.agents/skills/swiftui-expert-skill/SKILL.md): SwiftUI state, macOS scenes and windows, layout, accessibility, animation, and performance.
 - [app-ux-writing](.agents/skills/app-ux-writing/SKILL.md): Write or review app interface copy and control names.
-- [break-ui](.agents/skills/break-ui/SKILL.md): Stress-test UI with extreme or missing data.
-
-### Animation and motion
-
-- [animate](.agents/skills/animate/SKILL.md): Implement animations and transitions.
-- [animation-vocabulary](.agents/skills/animation-vocabulary/SKILL.md): Identify the name of a described motion effect.
-- [find-animation-opportunities](.agents/skills/find-animation-opportunities/SKILL.md): Propose places to add motion.
-- [improve-animations](.agents/skills/improve-animations/SKILL.md): Audit existing motion and plan improvements.
-- [review-animations](.agents/skills/review-animations/SKILL.md) (**explicit**): Review animation code.
 
 ### Architecture and domain modeling
 
@@ -28,7 +18,9 @@ Read the linked `SKILL.md` when its trigger applies; load supporting references 
 - [implement](.agents/skills/implement/SKILL.md) (**explicit**): Implement a spec or tickets.
 - [diagnosing-bugs](.agents/skills/diagnosing-bugs/SKILL.md): Diagnose failures and performance regressions.
 - [tdd](.agents/skills/tdd/SKILL.md): Develop test-first or add integration tests.
-- [write-swift](.agents/skills/write-swift/SKILL.md): Write, review, or migrate Swift code.
+- [write-swift](.agents/skills/write-swift/SKILL.md): Swift value modeling, protocols, API design, ARC, performance, and interop.
+- [swift-concurrency](.agents/skills/swift-concurrency/SKILL.md): Tasks, actors, Sendable, cancellation, isolation diagnostics, and Swift 6 migration.
+- [swift-testing-expert](.agents/skills/swift-testing-expert/SKILL.md): Swift Testing assertions, parameterization, async waiting, isolation, and XCTest migration.
 
 ### Planning and issue management
 
@@ -45,10 +37,17 @@ Read the linked `SKILL.md` when its trigger applies; load supporting references 
 - [pull-request-message](.agents/skills/pull-request-message/SKILL.md): Draft or revise PR and MR descriptions.
 - [handoff](.agents/skills/handoff/SKILL.md) (**explicit**): Prepare a conversation handoff for another agent.
 
-### Setup and guided workflows
+### Guided workflows
 
-- [setup-matt-pocock-skills](.agents/skills/setup-matt-pocock-skills/SKILL.md) (**explicit**): Configure the issue tracker, triage labels, and domain doc layout.
 - [wizard](.agents/skills/wizard/SKILL.md): Build a guided shell wizard for steps a human must perform.
+
+### Project skill scope
+
+Use project settings and the installed SDK as the authority for language features and API availability. Preserve macOS 15 support, per-window sessions, explicit UI isolation, and background image processing from the implementation ADR. General skill defaults do not authorize changing actor-isolation settings or deployment targets.
+
+Use `swift-concurrency` for concurrency and migration, `swift-testing-expert` for test APIs, and `tdd` for the test-first process. Keep XCTest for native UI automation and XCTest-only metrics. Use native SwiftUI motion references and preserve the behavior documented in `docs/acceptance.md`.
+
+See [the skill audit and maintenance notes](docs/agents/skills.md) for selection rationale, source revisions, and local adaptations. Repository skills live in `.agents/skills`; user-global and runtime-provided skills are managed separately.
 
 ### Issue tracker
 
