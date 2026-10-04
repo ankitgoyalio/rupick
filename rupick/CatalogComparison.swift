@@ -139,6 +139,10 @@ private struct PixelFingerprint: Hashable, Sendable {
     let width: Int
     let height: Int
     let digest: SHA256.Digest
+    var version: String {
+        "\(width)x\(height):\(digest)"
+    }
+
     init(_ pixels: DecodedPixels) {
         width = pixels.width; height = pixels.height
         digest = pixels.values.withUnsafeBytes { SHA256.hash(data: $0) }
@@ -449,6 +453,7 @@ enum CatalogComparison {
                 try incomingFingerprints.append(autoreleasepool {
                     try cache.fingerprint(url: incoming[index], context: context)
                 })
+                snapshot.results[index].contentVersion = incomingFingerprints.last.flatMap { $0 }?.version
             } catch {
                 snapshot.results[index].status = .unreadable
                 incomingFingerprints.append(nil)
@@ -527,9 +532,10 @@ enum CatalogComparison {
                 let location = String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1))
                 func candidate(matchingIDs: Set<String>) -> AssetCandidate {
                     AssetCandidate(id: entry.path, name: entry.deletingPathExtension().lastPathComponent,
-                                   location: location, representations: variants.map {
-                                       Representation(id: $0.id, url: $0.url, label: $0.label,
-                                                      matches: matchingIDs.contains($0.id))
+                                   location: location, representations: variants.map { variant in
+                                       Representation(id: variant.id, url: variant.url, label: variant.label,
+                                                      matches: matchingIDs.contains(variant.id),
+                                                      contentVersion: preparedEntry.representations.first(where: { $0.id == variant.id })?.fingerprint?.version)
                                    })
                 }
                 // An asset appears once in each content group, with all its alternatives available.

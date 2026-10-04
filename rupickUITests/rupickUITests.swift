@@ -360,6 +360,107 @@ final class rupickUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewFreshnessExplainsCatalogAndIncomingChanges() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let input = FileManager.default.temporaryDirectory.appendingPathComponent("review-\(UUID().uuidString).png")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: input)
+        }
+        try copyFixture(to: root)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("App/Primary.xcassets/Broken.imageset"))
+        let original = try Data(contentsOf: root.appendingPathComponent("Incoming/renamed.png"))
+        let newContent = try Data(contentsOf: root.appendingPathComponent("Incoming/new.png"))
+        try original.write(to: input)
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        app.buttons["chooseImages"].click()
+        choose(input.path, in: app)
+        selectIncoming(input.lastPathComponent, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        app.buttons["keepAsNew"].click()
+        assertReview("Keep as new", in: app)
+
+        let unrelated = root.appendingPathComponent("App/Primary.xcassets/Unrelated.imageset")
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        try newContent.write(to: unrelated.appendingPathComponent("image.png"))
+        try Data(#"{"images":[{"filename":"image.png","scale":"1x"}]}"#.utf8).write(to: unrelated.appendingPathComponent("Contents.json"))
+        XCTAssertTrue(app.staticTexts["3 / 3 assets compared"].waitForExistence(timeout: 30))
+        assertReview("Keep as new", in: app)
+        XCTAssertFalse(app.staticTexts["reviewNotice"].exists)
+
+        let added = root.appendingPathComponent("Added.xcassets")
+        try FileManager.default.copyItem(at: root.appendingPathComponent("Packages/Other.xcassets"), to: added)
+        assertNotice("New match found", in: app)
+        assertReview("Keep as new", in: app)
+        reuseFirstMatch(in: app)
+        assertReview("Reuse", in: app)
+        XCTAssertFalse(app.staticTexts["reviewNotice"].exists)
+
+        let anotherUnrelated = root.appendingPathComponent("App/Primary.xcassets/AnotherUnrelated.imageset")
+        try FileManager.default.copyItem(at: unrelated, to: anotherUnrelated)
+        XCTAssertTrue(app.staticTexts["5 / 5 assets compared"].waitForExistence(timeout: 30))
+        assertReview("Reuse", in: app)
+        XCTAssertFalse(app.staticTexts["reviewNotice"].exists)
+        let anotherMatch = root.appendingPathComponent("More.xcassets")
+        try FileManager.default.copyItem(at: added, to: anotherMatch)
+        assertNotice("New match found", in: app)
+        assertReview("Reuse", in: app)
+
+        // Added sorts first, so its representation is the selected reuse target.
+        try newContent.write(to: added.appendingPathComponent("Icon.imageset/light.png"), options: .atomic)
+        assertNotice("The reused image changed", in: app)
+        assertReview("Unreviewed", in: app)
+        reuseFirstMatch(in: app)
+        assertReview("Reuse", in: app)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("App/Primary.xcassets/Icon.imageset"))
+        assertNotice("The reused image changed", in: app)
+        assertReview("Unreviewed", in: app)
+
+        reuseFirstMatch(in: app)
+        assertReview("Reuse", in: app)
+        try newContent.write(to: input, options: .atomic)
+        assertNotice("Image changed", in: app)
+        assertReview("Unreviewed", in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        app.buttons["keepAsNew"].click()
+        assertReview("Keep as new", in: app)
+        try original.write(to: input, options: .atomic)
+        assertNotice("Image changed", in: app)
+        assertReview("Unreviewed", in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.exists)
+    }
+
+    @MainActor
+    private func assertReview(_ text: String, in app: XCUIApplication) {
+        let element = app.staticTexts["reviewOutcome"]
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 30), .completed)
+    }
+
+    @MainActor
+    private func assertNotice(_ text: String, in app: XCUIApplication) {
+        let element = app.staticTexts["reviewNotice"]
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 30), .completed)
+    }
+
+    @MainActor
+    private func reuseFirstMatch(in app: XCUIApplication) {
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: 10000)
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: -400)
+        let reuse = app.buttons.matching(identifier: "reuseAsset").firstMatch
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: reuse)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
+        reuse.click()
+    }
+
+    @MainActor
     func testCompletedProjectScanHasDistinctEmptyState() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-empty-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

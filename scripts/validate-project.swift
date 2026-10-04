@@ -139,14 +139,44 @@ struct ValidateProject {
             throw ValidationFailure.reviewFailed
         }
 
+        // Mutate only the temporary input created by this executable.
+        // Both decisions must become unreviewed when the incoming image changes.
+        try Data(contentsOf: inputs[1]).write(to: reencoded, options: .atomic)
+        await session.refresh(incoming: inputs).value
+        guard session.review(for: reencoded).outcome == nil,
+              session.review(for: reencoded).notice == .incomingChanged,
+              session.review(for: inputs[0]).outcome != nil,
+              session.review(for: inputs[1]).outcome == .keepAsNew
+        else {
+            throw ValidationFailure.reviewFailed
+        }
+
+        try Data(contentsOf: duplicate).write(to: reencoded, options: .atomic)
+        await session.refresh(incoming: inputs).value
+        guard let refreshed = session.results[2].candidates.first,
+              let matched = refreshed.representations.first(where: \.matches),
+              session.reuseAsset(for: reencoded, candidateID: refreshed.id, representationID: matched.id)
+        else {
+            throw ValidationFailure.reviewFailed
+        }
+
+        try Data(contentsOf: inputs[1]).write(to: reencoded, options: .atomic)
+        await session.refresh(incoming: inputs).value
+        guard session.review(for: reencoded).outcome == nil,
+              session.review(for: reencoded).notice == .incomingChanged
+        else {
+            throw ValidationFailure.reviewFailed
+        }
+
         let after = try catalogContents(root)
         guard before == after else {
             throw ValidationFailure.projectChanged
         }
 
-        print("Review acceptance passed: both outcomes retained after rescan, matching identity and representation retained, candidates preserved, catalog contents unchanged.")
+        print("Review acceptance passed: both outcomes retained after rescan and invalidated for changed temporary incoming content, matching identity and representation retained, candidates preserved, catalog contents unchanged.")
 
         print("Acceptance passed: \(session.discovered) assets; \(session.skipped) skipped; \(session.results[0].candidates.count) grouped duplicate matches; metadata/re-encoding and corrupt-input checks passed; new image has zero matches; \(heartbeats) main-actor heartbeats; elapsed \(started.duration(to: .now)).")
+        await session.close().value
     }
 
     private static func catalogContents(_ root: URL) throws -> [String: String] {

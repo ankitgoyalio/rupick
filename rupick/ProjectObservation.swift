@@ -289,3 +289,43 @@ final class ProjectObservation {
 
     isolated deinit { stop() }
 }
+
+// MARK: - IncomingObservationAdapter
+
+/// Watches explicitly chosen files, including files outside the project and ignored paths.
+/// Metadata checks avoid decoding images and detect atomic replacements and deletion.
+struct IncomingObservationAdapter: Sendable {
+    let start: @MainActor @Sendable ([URL], @escaping @MainActor @Sendable ([URL]) -> Void) -> Task<Void, Never>?
+
+    static let disabled = Self { _, _ in nil }
+    static let native = Self { urls, changed in
+        guard urls.isEmpty == false else {
+            return nil
+        }
+
+        let baseline = Dictionary(uniqueKeysWithValues: urls.map { ($0, version(of: $0)) })
+        let access = FileAccessLease(urls: urls, adapter: .native)
+        return Task.detached(priority: .utility) {
+            defer { access.release() }
+            var previous = baseline
+            while Task.isCancelled == false {
+                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                let current = Dictionary(uniqueKeysWithValues: urls.map { ($0, version(of: $0)) })
+                let updates = urls.filter { previous[$0] != current[$0] }
+                previous = current
+                if updates.isEmpty == false, Task.isCancelled == false {
+                    await changed(updates)
+                }
+            }
+        }
+    }
+
+    private static func version(of url: URL) -> String {
+        var attributes = stat()
+        guard url.path.withCString({ stat($0, &attributes) }) == 0 else {
+            return "unavailable"
+        }
+
+        return "\(attributes.st_ino):\(attributes.st_size):\(attributes.st_mtimespec.tv_sec):\(attributes.st_mtimespec.tv_nsec):\(attributes.st_ctimespec.tv_sec):\(attributes.st_ctimespec.tv_nsec)"
+    }
+}
