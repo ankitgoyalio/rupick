@@ -75,28 +75,23 @@ final class ProjectWorkspace {
 
     /// Validate while the grant is active, then transfer access to the session before releasing it.
     func open(_ url: URL) throws -> URL {
-        let access = FileAccessLease(urls: [url], adapter: .native)
-        defer { access.release() }
-        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isReadableKey])
-        guard values.isDirectory == true, values.isReadable == true else {
-            throw CocoaError(.fileReadNoPermission)
+        try withReadableProject(url) {
+            let identity = URL(fileURLWithPath: ProjectFileLocation.canonical(url).path, isDirectory: true)
+            let bookmark = try bookmarks.create(url)
+            if let saved = archive.projects.first(where: { $0.identity == identity }), sessions[identity] == nil {
+                resume(saved, root: url, unavailable: false)
+            }
+            let session = session(for: identity)
+            if session.root == nil {
+                session.open(root: url)
+            }
+            recents.removeAll { $0.id == identity }
+            recents.insert(RecentProject(id: identity, bookmark: bookmark), at: 0)
+            recents = Array(recents.prefix(10))
+            try defaults.set(JSONEncoder().encode(recents), forKey: Self.storageKey)
+            checkpoint(identity)
+            return identity
         }
-
-        let identity = URL(fileURLWithPath: ProjectFileLocation.canonical(url).path, isDirectory: true)
-        let bookmark = try bookmarks.create(url)
-        if let saved = archive.projects.first(where: { $0.identity == identity }), sessions[identity] == nil {
-            resume(saved, root: url, unavailable: false)
-        }
-        let session = session(for: identity)
-        if session.root == nil {
-            session.open(root: url)
-        }
-        recents.removeAll { $0.id == identity }
-        recents.insert(RecentProject(id: identity, bookmark: bookmark), at: 0)
-        recents = Array(recents.prefix(10))
-        try defaults.set(JSONEncoder().encode(recents), forKey: Self.storageKey)
-        checkpoint(identity)
-        return identity
     }
 
     func reopen(_ recent: RecentProject) throws -> URL {
@@ -120,25 +115,20 @@ final class ProjectWorkspace {
                 }
 
                 let root = try bookmarks.resolve(bookmark)
-                let access = FileAccessLease(urls: [root], adapter: .native)
-                defer { access.release() }
-                let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isReadableKey])
-                guard values.isDirectory == true, values.isReadable == true else {
-                    throw CocoaError(.fileReadNoPermission)
-                }
-
-                let identity = URL(fileURLWithPath: ProjectFileLocation.canonical(root).path, isDirectory: true)
-                if identity != saved.identity {
-                    archive.projects.removeAll { $0.identity == saved.identity }
-                    if sessions[identity] == nil {
-                        let moved = try SavedProjectSession(identity: identity, reference: SavedFileReference(url: root, bookmark: bookmarks.create(root)),
-                                                            incoming: saved.incoming, selection: saved.selection)
-                        resume(moved, root: root, unavailable: false)
+                return try withReadableProject(root) {
+                    let identity = URL(fileURLWithPath: ProjectFileLocation.canonical(root).path, isDirectory: true)
+                    if identity != saved.identity {
+                        archive.projects.removeAll { $0.identity == saved.identity }
+                        if sessions[identity] == nil {
+                            let moved = try SavedProjectSession(identity: identity, reference: SavedFileReference(url: root, bookmark: bookmarks.create(root)),
+                                                                incoming: saved.incoming, selection: saved.selection)
+                            resume(moved, root: root, unavailable: false)
+                        }
+                    } else {
+                        resume(saved, root: root, unavailable: false)
                     }
-                } else {
-                    resume(saved, root: root, unavailable: false)
+                    return identity
                 }
-                return identity
             } catch {
                 resume(saved, root: saved.reference.url, unavailable: true)
             }
@@ -186,38 +176,33 @@ final class ProjectWorkspace {
 
     @discardableResult
     func locateProject(_ identity: URL, at root: URL) throws -> URL {
-        let access = FileAccessLease(urls: [root], adapter: .native)
-        defer { access.release() }
-        let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isReadableKey])
-        guard values.isDirectory == true, values.isReadable == true else {
-            throw CocoaError(.fileReadNoPermission)
-        }
+        try withReadableProject(root) {
+            let bookmark = try bookmarks.create(root)
+            guard let session = sessions[identity] else {
+                return identity
+            }
 
-        let bookmark = try bookmarks.create(root)
-        guard let session = sessions[identity] else {
-            return identity
-        }
+            let canonical = URL(fileURLWithPath: ProjectFileLocation.canonical(root).path, isDirectory: true)
+            guard canonical == identity || sessions[canonical] == nil else {
+                throw CocoaError(.fileReadInvalidFileName)
+            }
 
-        let canonical = URL(fileURLWithPath: ProjectFileLocation.canonical(root).path, isDirectory: true)
-        guard canonical == identity || sessions[canonical] == nil else {
-            throw CocoaError(.fileReadInvalidFileName)
+            let reviews = session.savedReviews
+            let incoming = session.results.map(\.url)
+            let selection = session.selection
+            session.restore(root: root, incoming: incoming, reviews: reviews, selection: selection, blockedIncoming: session.inaccessibleIncoming)
+            if let index = archive.projects.firstIndex(where: { $0.identity == identity }) {
+                archive.projects[index].reference = SavedFileReference(url: root, bookmark: bookmark)
+            }
+            if canonical != identity {
+                sessions.removeValue(forKey: identity)
+                sessions[canonical] = session
+                session.didChange = { [weak self] in self?.checkpoint(canonical) }
+                archive.projects.removeAll { $0.identity == identity }
+            }
+            checkpoint(canonical)
+            return canonical
         }
-
-        let reviews = session.savedReviews
-        let incoming = session.results.map(\.url)
-        let selection = session.selection
-        session.restore(root: root, incoming: incoming, reviews: reviews, selection: selection, blockedIncoming: session.inaccessibleIncoming)
-        if let index = archive.projects.firstIndex(where: { $0.identity == identity }) {
-            archive.projects[index].reference = SavedFileReference(url: root, bookmark: bookmark)
-        }
-        if canonical != identity {
-            sessions.removeValue(forKey: identity)
-            sessions[canonical] = session
-            session.didChange = { [weak self] in self?.checkpoint(canonical) }
-            archive.projects.removeAll { $0.identity == identity }
-        }
-        checkpoint(canonical)
-        return canonical
     }
 
     @discardableResult
@@ -260,6 +245,18 @@ final class ProjectWorkspace {
             try storage.save(JSONEncoder().encode(archive))
             session.reportPersistenceSaved()
         } catch { session.reportPersistenceFailure() }
+    }
+
+    /// Keep the grant alive across validation and transfer to session-owned leases.
+    private func withReadableProject<Value>(_ url: URL, operation: () throws -> Value) throws -> Value {
+        let access = FileAccessLease(urls: [url], adapter: .native)
+        defer { access.release() }
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isReadableKey])
+        guard values.isDirectory == true, values.isReadable == true else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+
+        return try operation()
     }
 
     func session(for identity: URL) -> ProjectSession {

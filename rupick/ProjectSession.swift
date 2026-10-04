@@ -367,6 +367,7 @@ final class ProjectSession {
             return false
         }
 
+        pendingReviews[incoming] = nil
         reviews[incoming, default: IncomingReview()].record(.reuse(candidate: candidate, representation: representation), for: result)
         selectRepresentation(for: incoming, candidateID: candidateID, representationID: representationID)
         return true
@@ -377,6 +378,7 @@ final class ProjectSession {
             return
         }
 
+        pendingReviews[incoming] = nil
         reviews[incoming, default: IncomingReview()].record(.keepAsNew, for: result)
         didChange?()
     }
@@ -461,6 +463,7 @@ final class ProjectSession {
         }
 
         blockedIncoming.remove(original)
+        incomingAccess.removeValue(forKey: original)?.release()
         let review = pendingReviews.removeValue(forKey: original) ?? reviews.removeValue(forKey: original)
         reviews[original] = nil
         if let review {
@@ -603,6 +606,7 @@ final class ProjectSession {
                 return
             }
         }
+        restoredSelection = nil
         self.selection = selection
         didChange?()
     }
