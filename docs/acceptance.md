@@ -15,7 +15,7 @@ For a larger project, use a renamed copy of a known catalog PNG or JPEG and a kn
 ```sh
 swiftc -swift-version 6 -parse-as-library \
   rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ThumbnailStore.swift \
-  rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift \
+  rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift rupick/IncomingQueue.swift \
   scripts/validate-project.swift -o /tmp/rupick-validate
 /tmp/rupick-validate /path/to/project /path/to/duplicate.png /path/to/new.png
 ```

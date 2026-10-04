@@ -124,6 +124,43 @@ struct ProjectLifecycleTests {
         await closing.value
     }
 
+    @Test func intakeSettlementTransfersOnlyUniqueSupportedFileAccess() throws {
+        let access = AccessRecorder()
+        let queue = IncomingQueue(access: access.adapter)
+        let earlier = try #require(queue.begin(count: 1))
+        let later = try #require(queue.begin(count: 1))
+        let unsupported = URL(fileURLWithPath: "/incoming/text.txt")
+        #expect(queue.receive([first, second, second, unsupported], batch: later, excluding: [first]) == nil)
+        #expect(access.active(first) == 1 && access.active(second) == 1 && access.active(unsupported) == 1)
+        // A repeated picker completion cannot replace an already completed batch.
+        #expect(queue.receive([], batch: later, excluding: [first]) == nil)
+        let settlement = try #require(queue.receive([], batch: earlier, excluding: [first]))
+        #expect(settlement.urls == [second])
+        #expect(settlement.rejected)
+        #expect(queue.hasPending == false)
+        #expect(access.active(first) == 0 && access.active(unsupported) == 0)
+        #expect(access.active(second) == 1)
+        // Resetting intake cannot revoke access already transferred to the session.
+        queue.reset()
+        #expect(access.active(second) == 1)
+        settlement.access.values.forEach { $0.release() }
+        #expect(access.isBalanced)
+    }
+
+    @Test(arguments: [-1, 1, Int.max])
+    func intakeIgnoresInvalidSlotsAndResetCallbacks(index: Int) throws {
+        let access = AccessRecorder()
+        let queue = IncomingQueue(access: access.adapter)
+        #expect(queue.begin(count: 0) == nil)
+        let batch = try #require(queue.begin(count: 1))
+        #expect(queue.receive(first, batch: batch, index: index, excluding: []) == nil)
+        #expect(queue.hasPending && access.isBalanced)
+        queue.reset()
+        #expect(queue.receive(first, batch: batch, index: 0, excluding: []) == nil)
+        #expect(queue.receive([first], batch: batch, excluding: []) == nil)
+        #expect(queue.hasPending == false && access.isBalanced)
+    }
+
     @Test func cancelRetainsInspectionButDiscardsPendingIntakeAndLateScan() async throws {
         let scan = ControlledScan()
         let access = AccessRecorder()
