@@ -157,7 +157,7 @@ final class CatalogComparisonCache: Sendable {
 
     private let records = Mutex(Records())
 
-    var decodedImageCount: Int {
+    fileprivate var decodedImageCount: Int {
         records.withLock { $0.decoded }
     }
 
@@ -234,6 +234,7 @@ final class CatalogComparisonCache: Sendable {
 
 enum CatalogComparison {
     static func run(root: URL, incoming: [URL], cache: CatalogComparisonCache = CatalogComparisonCache(), publish: @Sendable (ScanSnapshot) async -> Void) async {
+        let initialDecodes = cache.decodedImageCount
         var snapshot = ScanSnapshot(results: incoming.map { IncomingResult(url: $0) })
         let boundary = ProjectFileLocation.canonical(root)
         var isDirectory: ObjCBool = false
@@ -436,6 +437,8 @@ enum CatalogComparison {
         }
         if Task.isCancelled == false {
             cache.retain(sources: sources)
+            snapshot.imageDecodes = cache.decodedImageCount - initialDecodes
+            await publish(snapshot)
         }
     }
 }

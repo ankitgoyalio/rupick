@@ -147,6 +147,7 @@ struct ScanSnapshot: Sendable {
     var discovered = 0
     var compared = 0
     var decoded = 0
+    var imageDecodes = 0
     var skipped = 0
     var phase = "Discovering image assets…"
     var error: String?
@@ -205,6 +206,8 @@ final class ProjectSession {
     private(set) var discovered = 0
     private(set) var compared = 0
     private(set) var decoded = 0
+    /// Normalization work in the latest scan, exposed for workflow diagnostics.
+    private(set) var imageDecodes = 0
     private(set) var skipped = 0
     private(set) var phase = "Choose a project folder to begin."
     private(set) var error: String?
@@ -359,7 +362,7 @@ final class ProjectSession {
         if selection == nil, let first = incoming.first {
             selection = .incoming(first)
         }
-        discovered = 0; compared = 0; decoded = 0; skipped = 0; error = nil
+        discovered = 0; compared = 0; decoded = 0; imageDecodes = 0; skipped = 0; error = nil
         phase = "Discovering image assets…"
         state = .running
         // Acquire before scheduling: a close can release window grants before the worker starts.
@@ -501,7 +504,7 @@ final class ProjectSession {
         temporaryRoot = nil
         root = nil; results = []; reviews = [:]; duplicateGroups = []; selection = nil; notice = nil
         state = .idle
-        discovered = 0; compared = 0; decoded = 0; skipped = 0; error = nil
+        discovered = 0; compared = 0; decoded = 0; imageDecodes = 0; skipped = 0; error = nil
         phase = "Choose a project folder to begin."
         let previousCleanup = cleanup
         let task = Task { [weak self] in
@@ -558,6 +561,7 @@ final class ProjectSession {
         discovered = snapshot.discovered
         compared = snapshot.compared
         decoded = snapshot.decoded
+        imageDecodes = snapshot.imageDecodes
         skipped = snapshot.skipped
         phase = snapshot.phase
         error = snapshot.error

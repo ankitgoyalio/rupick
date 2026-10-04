@@ -83,20 +83,17 @@
                 try image.write(to: entry.appendingPathComponent("image.png"))
                 try Data(#"{"images":[{"filename":"image.png","scale":"1x"}]}"#.utf8).write(to: entry.appendingPathComponent("Contents.json"))
             }
-            let cache = CatalogComparisonCache()
-            let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, publish in
-                await CatalogComparison.run(root: root, incoming: incoming, cache: cache, publish: publish)
-            }))
+            let session = ProjectSession()
             await session.open(root: root).value
             #expect(session.duplicateGroups.first?.members.count == 150)
-            let decoded = cache.decodedImageCount
+            let decoded = session.imageDecodes
             #expect(decoded >= 150)
             let metadata = root.appendingPathComponent("Assets.xcassets/Image149.imageset/Contents.json")
             try Data(#"{"images":[{"filename":"image.png","scale":"3x"}]}"#.utf8).write(to: metadata)
             await session.refresh(incoming: []).value
             #expect(session.duplicateGroups.first?.members.count == 150)
-            #expect(session.duplicateGroups.first?.members.contains(where: { $0.name == "Image149" && $0.representations.first?.label.contains("3x") == true }) == true)
-            #expect(cache.decodedImageCount == decoded)
+            try await eventually { session.state == .complete && session.duplicateGroups.first?.members.contains(where: { $0.name == "Image149" && $0.representations.first?.label.contains("3x") == true }) == true }
+            #expect(session.imageDecodes == 0)
             await session.close().value
         }
 
