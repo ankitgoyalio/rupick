@@ -815,6 +815,29 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(status == "No matches found" || status == "Incomplete search · 0 matches so far")
         exerciseReview(in: app, duplicateName: URL(fileURLWithPath: config.duplicate).lastPathComponent,
                        otherName: URL(fileURLWithPath: config.newImage).lastPathComponent)
+        // Exercise incoming freshness using only a disposable copy outside the project.
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("local-review-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: copy) }
+        let duplicateBytes = try Data(contentsOf: URL(fileURLWithPath: config.duplicate))
+        let newBytes = try Data(contentsOf: URL(fileURLWithPath: config.newImage))
+        try duplicateBytes.write(to: copy)
+        app.buttons["chooseImages"].click()
+        choose(copy.path, in: app)
+        selectIncoming(copy.lastPathComponent, in: app)
+        reuseFirstMatch(in: app)
+        assertReview("Reuse", in: app)
+        try newBytes.write(to: copy, options: .atomic)
+        assertNotice("Image changed", in: app)
+        assertReview("Unreviewed", in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
+        app.scrollViews["comparisonScrollView"].scroll(byDeltaX: 0, deltaY: 10000)
+        app.buttons["keepAsNew"].click()
+        assertReview("Keep as new", in: app)
+        try duplicateBytes.write(to: copy, options: .atomic)
+        assertNotice("Image changed", in: app)
+        assertReview("Unreviewed", in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 600))
+        XCTAssertTrue(app.staticTexts["Exact match"].firstMatch.exists)
     }
 
     @MainActor
