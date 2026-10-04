@@ -384,7 +384,9 @@ final class rupickUITests: XCTestCase {
         for index in 0 ..< 100 {
             let entry = root.appendingPathComponent("Assets.xcassets/Icon\(index).imageset")
             try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
-            try data.write(to: entry.appendingPathComponent("image.png"))
+            var image = data
+            image.append(contentsOf: Array("variant \(index)".utf8))
+            try image.write(to: entry.appendingPathComponent("image.png"))
             try Data(#"{"images":[{"filename":"image.png","scale":"1x"}]}"#.utf8).write(to: entry.appendingPathComponent("Contents.json"))
         }
         let app = XCUIApplication()
@@ -544,6 +546,7 @@ final class rupickUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "does not guarantee")).firstMatch.exists)
         app.typeKey(.escape, modifierFlags: [])
         try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(app.staticTexts["Search failed"].waitForExistence(timeout: 30))
         app.buttons["chooseImages"].click()
         choose(input.path, in: app)
         selectIncoming(input.lastPathComponent, in: app)

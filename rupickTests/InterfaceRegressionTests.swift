@@ -33,8 +33,71 @@
             #expect(session.duplicateGroups == previous)
             try FileManager.default.removeItem(at: root.appendingPathComponent("Packages"))
             await session.refresh(incoming: []).value
-            #expect(session.duplicateGroups.isEmpty)
+            try await eventually { session.duplicateGroups.isEmpty && session.state == .complete }
+        }
+
+        @Test func aliasedProjectRootSharesDiscoveryAndObservationBoundary() async throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let source = try StressDataset.demo.makeProject()
+            defer { try? FileManager.default.removeItem(at: source) }
+            try FileManager.default.copyItem(at: source.appendingPathComponent("Packages"), to: root.appendingPathComponent("Packages"))
+            let alias = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+            defer { try? FileManager.default.removeItem(at: alias) }
+            let session = ProjectSession()
+            await session.open(root: alias).value
             #expect(session.state == .complete)
+            #expect(session.duplicateGroups.count == 1)
+            try FileManager.default.removeItem(at: root.appendingPathComponent("Packages"))
+            try await eventually { session.state == .complete && session.duplicateGroups.isEmpty }
+            await session.close().value
+        }
+
+        @Test func observationAcceptsRootWithoutDirectoryHint() async throws {
+            let root = try StressDataset.demo.makeProject()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let session = ProjectSession()
+            let selected = URL(fileURLWithPath: root.path, isDirectory: false)
+            await session.open(root: selected).value
+            #expect(session.state == .complete)
+            #expect(session.duplicateGroups.count == 1)
+            await session.close().value
+        }
+
+        @Test func metadataRefreshReusesUnchangedComparisonsBeyondPixelCacheCapacity() async throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let fixture = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("fixtures/ExactMatching/Incoming/new.png")
+            let bytes = try Data(contentsOf: fixture)
+            for index in 0 ..< 150 {
+                let entry = root.appendingPathComponent("Assets.xcassets/Image\(index).imageset")
+                try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+                var image = bytes
+                image.append(contentsOf: Array("variant \(index)".utf8))
+                try image.write(to: entry.appendingPathComponent("image.png"))
+                try Data(#"{"images":[{"filename":"image.png","scale":"1x"}]}"#.utf8).write(to: entry.appendingPathComponent("Contents.json"))
+            }
+            let cache = CatalogComparisonCache()
+            let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, publish in
+                await CatalogComparison.run(root: root, incoming: incoming, cache: cache, publish: publish)
+            }))
+            await session.open(root: root).value
+            #expect(session.duplicateGroups.first?.members.count == 150)
+            let decoded = cache.decodedImageCount
+            #expect(decoded >= 150)
+            let metadata = root.appendingPathComponent("Assets.xcassets/Image149.imageset/Contents.json")
+            try Data(#"{"images":[{"filename":"image.png","scale":"3x"}]}"#.utf8).write(to: metadata)
+            await session.refresh(incoming: []).value
+            #expect(session.duplicateGroups.first?.members.count == 150)
+            #expect(session.duplicateGroups.first?.members.contains(where: { $0.name == "Image149" && $0.representations.first?.label.contains("3x") == true }) == true)
+            #expect(cache.decodedImageCount == decoded)
+            await session.close().value
         }
 
         @Test func catalogDeletionAutomaticallyReconcilesResults() async throws {

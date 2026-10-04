@@ -100,10 +100,12 @@ final class ProjectIgnoreRules {
     private var cache = [URL: [Rule]]()
 
     init(root: URL) {
-        self.root = root
+        self.root = ProjectFileLocation.canonical(root)
     }
 
     func ignores(_ url: URL, isDirectory: Bool) throws -> Bool {
+        let url = ProjectFileLocation.canonical(url.deletingLastPathComponent())
+            .appendingPathComponent(url.lastPathComponent, isDirectory: isDirectory)
         var ignored = false
         for rule in try rules(in: url.deletingLastPathComponent()) where rule.matches(url, isDirectory: isDirectory) {
             ignored = rule.negated == false
@@ -115,7 +117,11 @@ final class ProjectIgnoreRules {
         if let cached = cache[directory] {
             return cached
         }
-        var rules = directory == root ? [] : try rules(in: directory.deletingLastPathComponent())
+        guard directory.path == root.path || directory.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/") else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+
+        var rules = directory.path == root.path ? [] : try rules(in: directory.deletingLastPathComponent())
         let file = directory.appendingPathComponent(".gitignore")
         // Git does not follow symbolic links when reading .gitignore files.
         if FileManager.default.fileExists(atPath: file.path),

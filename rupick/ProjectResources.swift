@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Synchronization
 
@@ -36,5 +37,20 @@ final class FileAccessLease: Sendable {
 
     deinit {
         release()
+    }
+}
+
+// MARK: - ProjectFileLocation
+
+/// Foundation can preserve /tmp aliases while enumeration returns /private/tmp.
+/// Use the filesystem's canonical location for discovery and ignore-rule boundaries.
+enum ProjectFileLocation {
+    static func canonical(_ url: URL) -> URL {
+        guard let path = url.path.withCString({ realpath($0, nil) }) else {
+            return url.standardizedFileURL
+        }
+
+        defer { free(path) }
+        return URL(fileURLWithPath: String(cString: path), isDirectory: url.hasDirectoryPath)
     }
 }

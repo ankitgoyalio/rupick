@@ -373,6 +373,7 @@ final class ProjectSession {
             }
             await observation?.ready()
             guard Task.isCancelled == false else {
+                await self?.retire(token: token)
                 return
             }
 
@@ -576,6 +577,10 @@ final class ProjectSession {
                                   representations: candidate.representations.map { representations[$0.id] ?? $0 } +
                                       update.representations.filter { previousRepresentationIDs.contains($0.id) == false })
         } + updates.filter { previousIDs.contains($0.id) == false }
+    }
+
+    private func retire(token: UUID) {
+        workers[token] = nil
     }
 
     private func finish(token: UUID) {

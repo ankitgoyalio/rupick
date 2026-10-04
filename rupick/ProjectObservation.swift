@@ -18,8 +18,9 @@ private actor CatalogFileState {
     }
 
     func ready() async {
-        if previous == nil {
-            previous = await baseline.value
+        let initial = await baseline.value
+        if active, previous == nil {
+            previous = initial
         }
     }
 
@@ -137,7 +138,7 @@ final class ProjectObservation {
     }
 
     init?(root: URL, changed: @escaping @MainActor @Sendable () -> Void) {
-        let root = root.resolvingSymlinksInPath()
+        let root = ProjectFileLocation.canonical(root)
         files = CatalogFileState(root: root)
         let path = root.path
         let callback = Callback(root: path, files: files, changed: changed)
