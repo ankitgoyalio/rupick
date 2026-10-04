@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import UniformTypeIdentifiers
 
 // MARK: - Representation
 
@@ -173,13 +172,6 @@ final class ProjectSession {
         })
     }
 
-    private struct IncomingBatch {
-        let id: UUID
-        var urls: [URL?]
-        var remaining: Set<Int>
-        var access = [URL: FileAccessLease]()
-    }
-
     private(set) var root: URL?
     private(set) var results = [IncomingResult]()
     private(set) var reviews = [URL: IncomingReview]()
@@ -217,13 +209,14 @@ final class ProjectSession {
     @ObservationIgnored private var latestSnapshot: ScanSnapshot?
     @ObservationIgnored private var projectAccess: FileAccessLease?
     @ObservationIgnored private var incomingAccess = [URL: FileAccessLease]()
-    @ObservationIgnored private var batches = [IncomingBatch]()
+    @ObservationIgnored private let incomingQueue: IncomingQueue
     @ObservationIgnored private var temporaryRoot: URL?
     @ObservationIgnored private var retiredPreviews = [Task<Void, Never>]()
     @ObservationIgnored private var cleanup: Task<Void, Never>?
 
     init(dependencies: Dependencies = .native) {
         self.dependencies = dependencies
+        incomingQueue = IncomingQueue(access: dependencies.access)
         thumbnails = ThumbnailStore(access: dependencies.access)
     }
 
@@ -373,90 +366,39 @@ final class ProjectSession {
         }
 
         notice = nil
-        let id = UUID()
-        batches.append(IncomingBatch(id: id, urls: Array(repeating: nil, count: count), remaining: Set(0 ..< count)))
-        hasPendingIncoming = true
-        return id
+        let batch = incomingQueue.begin(count: count)
+        hasPendingIncoming = incomingQueue.hasPending
+        return batch
     }
 
     @discardableResult
     func receiveIncoming(_ urls: [URL], batch: UUID) -> Task<Void, Never>? {
-        guard let index = batches.firstIndex(where: { $0.id == batch }) else {
-            return nil
-        }
-
-        // A picker registers a single slot before its final selection count is known.
-        guard batches[index].remaining.isEmpty == false else {
-            return nil
-        }
-
-        batches[index].urls = urls.map { Optional($0) }
-        batches[index].remaining = []
-        for url in urls where batches[index].access[url] == nil {
-            batches[index].access[url] = FileAccessLease(urls: [url], adapter: dependencies.access)
-        }
-        return drainIncoming()
+        accept(incomingQueue.receive(urls, batch: batch, excluding: results.map(\.url)))
     }
 
     @discardableResult
     func receiveIncoming(_ url: URL?, batch: UUID, index: Int) -> Task<Void, Never>? {
-        guard let batchIndex = batches.firstIndex(where: { $0.id == batch }),
-              batches[batchIndex].remaining.remove(index) != nil
-        else {
-            return nil
-        }
-
-        batches[batchIndex].urls[index] = url
-        if let url, batches[batchIndex].access[url] == nil {
-            batches[batchIndex].access[url] = FileAccessLease(urls: [url], adapter: dependencies.access)
-        }
-        return drainIncoming()
+        accept(incomingQueue.receive(url, batch: batch, index: index, excluding: results.map(\.url)))
     }
 
     @discardableResult
     func abandonIncoming(batch: UUID) -> Task<Void, Never>? {
-        guard let index = batches.firstIndex(where: { $0.id == batch }) else {
-            return nil
-        }
-
-        batches.remove(at: index)
-        return drainIncoming()
+        accept(incomingQueue.abandon(batch: batch, excluding: results.map(\.url)))
     }
 
-    private func drainIncoming() -> Task<Void, Never>? {
-        var incoming = results.map(\.url)
-        var seen = Set(incoming)
-        var added = [URL]()
-        var rejected = false
-        var settled = false
-        while let first = batches.first, first.remaining.isEmpty {
-            let batch = batches.removeFirst()
-            settled = true
-            for url in batch.urls {
-                guard let url, url.isFileURL,
-                      let type = UTType(filenameExtension: url.pathExtension),
-                      type.conforms(to: .png) || type.conforms(to: .jpeg)
-                else {
-                    rejected = true
-                    continue
-                }
-
-                if seen.insert(url).inserted {
-                    incoming.append(url)
-                    added.append(url)
-                    incomingAccess[url] = batch.access[url]
-                }
-            }
-        }
-        hasPendingIncoming = batches.isEmpty == false
-        if settled {
-            notice = rejected ? "Some files were not added. Choose PNG or JPEG files, or use Choose Images to try again." : nil
-        }
-        guard added.isEmpty == false else {
+    private func accept(_ settlement: IncomingQueue.Settlement?) -> Task<Void, Never>? {
+        hasPendingIncoming = incomingQueue.hasPending
+        guard let settlement else {
             return nil
         }
 
-        return refresh(incoming: incoming)
+        notice = settlement.rejected ? "Some files were not added. Choose PNG or JPEG files, or use Choose Images to try again." : nil
+        guard settlement.urls.isEmpty == false else {
+            return nil
+        }
+
+        incomingAccess.merge(settlement.access) { existing, _ in existing }
+        return refresh(incoming: results.map(\.url) + settlement.urls)
     }
 
     func cancel() {
@@ -464,7 +406,7 @@ final class ProjectSession {
             return
         }
 
-        batches = []
+        incomingQueue.reset()
         hasPendingIncoming = false
         worker?.cancel()
         worker = nil
@@ -485,7 +427,7 @@ final class ProjectSession {
         worker = nil
         generation = UUID()
         id = UUID()
-        batches = []
+        incomingQueue.reset()
         hasPendingIncoming = false
         latestSnapshot = nil
         projectAccess?.release()
