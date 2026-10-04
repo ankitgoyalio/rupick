@@ -1,5 +1,6 @@
 // swiftformat:disable acronyms
 import CoreServices
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -295,7 +296,7 @@ final class ProjectObservation {
 /// Watches explicitly chosen files, including files outside the project and ignored paths.
 /// Metadata checks avoid decoding images and detect atomic replacements and deletion.
 struct IncomingObservationAdapter: Sendable {
-    let start: @MainActor @Sendable ([URL], @escaping @MainActor @Sendable ([URL]) -> Void) -> Task<Void, Never>?
+    let start: @MainActor @Sendable ([URL], @escaping @MainActor @Sendable ([URL]) -> Void) -> IncomingObservation?
 
     static let disabled = Self { _, _ in nil }
     static let native = Self { urls, changed in
@@ -303,20 +304,51 @@ struct IncomingObservationAdapter: Sendable {
             return nil
         }
 
-        let baseline = Dictionary(uniqueKeysWithValues: urls.map { ($0, version(of: $0)) })
         let access = FileAccessLease(urls: urls, adapter: .native)
-        return Task.detached(priority: .utility) {
+        let baseline = Task.detached(priority: .utility) {
+            var files = [URL: FileState]()
+            for url in urls {
+                guard Task.isCancelled == false else {
+                    break
+                }
+
+                files[url] = FileState.read(url)
+            }
+            return files
+        }
+        let task = Task.detached(priority: .utility) {
             defer { access.release() }
-            var previous = baseline
+            var previous = await baseline.value
             while Task.isCancelled == false {
                 do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
-                let current = Dictionary(uniqueKeysWithValues: urls.map { ($0, version(of: $0)) })
-                let updates = urls.filter { previous[$0] != current[$0] }
-                previous = current
+                var updates = [URL]()
+                for url in urls where previous[url]?.metadata != version(of: url) {
+                    let current = FileState.read(url)
+                    if previous[url]?.content != current.content {
+                        updates.append(url)
+                    }
+                    previous[url] = current
+                }
                 if updates.isEmpty == false, Task.isCancelled == false {
                     await changed(updates)
                 }
             }
+        }
+        return IncomingObservation(ready: { _ = await baseline.value }, task: task, stop: {
+            baseline.cancel()
+            task.cancel()
+        })
+    }
+
+    private struct FileState: Sendable {
+        let metadata: String
+        let content: SHA256.Digest?
+
+        static func read(_ url: URL) -> Self {
+            // If a writer races this read, the earlier metadata causes another check.
+            let metadata = version(of: url)
+            let data = try? Data(contentsOf: url)
+            return Self(metadata: metadata, content: data.map { SHA256.hash(data: $0) })
         }
     }
 
@@ -327,5 +359,17 @@ struct IncomingObservationAdapter: Sendable {
         }
 
         return "\(attributes.st_ino):\(attributes.st_size):\(attributes.st_mtimespec.tv_sec):\(attributes.st_mtimespec.tv_nsec):\(attributes.st_ctimespec.tv_sec):\(attributes.st_ctimespec.tv_nsec)"
+    }
+}
+
+// MARK: - IncomingObservation
+
+struct IncomingObservation: Sendable {
+    let ready: @Sendable () async -> Void
+    let task: Task<Void, Never>
+    let stop: @Sendable () -> Void
+
+    func cancel() {
+        stop()
     }
 }

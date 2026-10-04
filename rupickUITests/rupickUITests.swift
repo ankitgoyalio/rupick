@@ -384,6 +384,8 @@ final class rupickUITests: XCTestCase {
         app.buttons["keepAsNew"].click()
         assertReview("Keep as new", in: app)
 
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(10)], ofItemAtPath: input.path)
+        try original.write(to: input, options: .atomic)
         let unrelated = root.appendingPathComponent("App/Primary.xcassets/Unrelated.imageset")
         try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
         try newContent.write(to: unrelated.appendingPathComponent("image.png"))
@@ -400,6 +402,8 @@ final class rupickUITests: XCTestCase {
         assertReview("Reuse", in: app)
         XCTAssertFalse(app.staticTexts["reviewNotice"].exists)
 
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(20)], ofItemAtPath: input.path)
+        try original.write(to: input, options: .atomic)
         let anotherUnrelated = root.appendingPathComponent("App/Primary.xcassets/AnotherUnrelated.imageset")
         try FileManager.default.copyItem(at: unrelated, to: anotherUnrelated)
         XCTAssertTrue(app.staticTexts["5 / 5 assets compared"].waitForExistence(timeout: 30))

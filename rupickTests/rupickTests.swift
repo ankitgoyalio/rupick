@@ -43,6 +43,34 @@ struct ProjectSessionTests {
         #expect(session.review(for: image).outcome == nil)
     }
 
+    @Test func unchangedIncomingBytesPreserveBothReviewChoices() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = try fixture.image("incoming.png")
+        try fixture.asset("Assets.xcassets/Icon.imageset", images: [image])
+        let session = ProjectSession()
+        await session.open(root: fixture.root, incoming: [image]).value
+        let candidate = try #require(session.results.first?.candidates.first)
+        let representation = try #require(candidate.representations.first { $0.matches })
+        let original = try Data(contentsOf: image)
+        for reuse in [false, true] {
+            if reuse {
+                #expect(session.reuseAsset(for: image, candidateID: candidate.id, representationID: representation.id))
+            } else {
+                session.keepAsNew(image)
+            }
+            let outcome = session.review(for: image).outcome
+            try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(10)], ofItemAtPath: image.path)
+            try original.write(to: image, options: .atomic)
+            // Give native file observation time to reconcile both metadata events.
+            try await Task.sleep(for: .milliseconds(600))
+            await session.refresh(incoming: [image]).value
+            #expect(session.review(for: image).outcome == outcome)
+            #expect(session.review(for: image).notice == nil)
+        }
+        await session.close().value
+    }
+
     @Test func reviewRejectsAlternativesAndUnknownIdentities() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }

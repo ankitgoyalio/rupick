@@ -306,7 +306,7 @@ final class ProjectSession {
     private(set) var error: String?
     @ObservationIgnored private let dependencies: Dependencies
     @ObservationIgnored private var observation: ProjectObservation?
-    @ObservationIgnored private var incomingObservation: Task<Void, Never>?
+    @ObservationIgnored private var incomingObservation: IncomingObservation?
     @ObservationIgnored private var incomingObservationID = UUID()
     @ObservationIgnored private var refreshDelay: Task<Void, Never>?
     @ObservationIgnored private var worker: Task<Void, Never>?
@@ -449,7 +449,7 @@ final class ProjectSession {
         incomingAccess = incomingAccess.filter { seen.contains($0.key) }
         incomingObservation?.cancel()
         if let incomingObservation {
-            retiredPreviews.append(incomingObservation)
+            retiredPreviews.append(incomingObservation.task)
         }
         let observationID = UUID()
         incomingObservationID = observationID
@@ -481,11 +481,13 @@ final class ProjectSession {
         let access = FileAccessLease(urls: [root] + incoming, adapter: dependencies.access)
         let scan = dependencies.scan
         let observation = observation
+        let incomingObservation = incomingObservation
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             defer { access.release() }
             let publisher = ScanPublisher { [weak self] snapshot in
                 await self?.receive(snapshot, token: token)
             }
+            await incomingObservation?.ready()
             let inventory = await observation?.takeInitialInventory()
             guard Task.isCancelled == false else {
                 await self?.retire(token: token)
@@ -611,7 +613,7 @@ final class ProjectSession {
         incomingAccess = [:]
         incomingObservationID = UUID()
         incomingObservation?.cancel()
-        let previews = retiredPreviews + [thumbnails.close()] + [incomingObservation].compactMap { $0 }
+        let previews = retiredPreviews + [thumbnails.close()] + [incomingObservation?.task].compactMap { $0 }
         incomingObservation = nil
         retiredPreviews = []
         thumbnails = ThumbnailStore(access: dependencies.access)

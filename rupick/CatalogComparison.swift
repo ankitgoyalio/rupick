@@ -139,13 +139,23 @@ private struct PixelFingerprint: Hashable, Sendable {
     let width: Int
     let height: Int
     let digest: SHA256.Digest
-    var version: String {
-        "\(width)x\(height):\(digest)"
+    let version: String
+
+    /// Source-byte versions track review freshness without changing exact pixel matching.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.width == rhs.width && lhs.height == rhs.height && lhs.digest == rhs.digest
     }
 
-    init(_ pixels: DecodedPixels) {
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(digest)
+    }
+
+    init(_ pixels: DecodedPixels, source: Data) {
         width = pixels.width; height = pixels.height
         digest = pixels.values.withUnsafeBytes { SHA256.hash(data: $0) }
+        version = SHA256.hash(data: source).description
     }
 }
 
@@ -272,7 +282,7 @@ final class CatalogComparisonCache: Sendable {
 
     private func fingerprint(data: Data, identity: Identity, context: CIContext) throws -> PixelFingerprint {
         let url = identity.url
-        let fingerprint = try PixelFingerprint(pixels(data: data, context: context))
+        let fingerprint = try PixelFingerprint(pixels(data: data, context: context), source: data)
         guard try identity == Identity(url: url) else {
             throw CocoaError(.fileReadUnknown)
         }
