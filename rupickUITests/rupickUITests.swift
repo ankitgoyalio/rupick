@@ -10,12 +10,19 @@ final class rupickUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Each test starts at the welcome screen independently of prior native window state.
+    private func makeApplication() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        return app
+    }
+
     @MainActor
     func testWelcomeScreenAndOpenProjectAction() {
         for appearance in ["light", "dark"] {
-            let app = XCUIApplication()
+            let app = makeApplication()
             app.launchEnvironment["RUPICK_STRESS_APPEARANCE"] = appearance
-            app.launchArguments = ["-AppleInterfaceStyle", appearance.capitalized]
+            app.launchArguments += ["-AppleInterfaceStyle", appearance.capitalized]
             app.launch()
             let button = app.buttons["openProject"]
             XCTAssertTrue(button.waitForExistence(timeout: 10))
@@ -58,9 +65,9 @@ final class rupickUITests: XCTestCase {
     #if DEBUG
         @MainActor
         func testStressFixturesAndPreviewControls() {
-            let app = XCUIApplication()
+            let app = makeApplication()
             app.launchEnvironment["RUPICK_STRESS_UI"] = "1"
-            app.launchArguments = ["-AppleInterfaceStyle", "Dark"]
+            app.launchArguments += ["-AppleInterfaceStyle", "Dark"]
             app.launch()
             XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
             let picker = app.popUpButtons["stressDatasetPicker"]
@@ -116,7 +123,7 @@ final class rupickUITests: XCTestCase {
     #if DEBUG
         @MainActor
         func testReviewLayoutAtMinimumWindowSize() {
-            let app = XCUIApplication()
+            let app = makeApplication()
             app.launchEnvironment["RUPICK_STRESS_UI"] = "1"
             app.launchEnvironment["RUPICK_STRESS_APPEARANCE"] = "light"
             app.launch()
@@ -154,7 +161,7 @@ final class rupickUITests: XCTestCase {
             let entry = root.appendingPathComponent("App/Primary.xcassets/Copy\(index).imageset")
             try FileManager.default.copyItem(at: root.appendingPathComponent("App/Primary.xcassets/Icon.imageset"), to: entry)
         }
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -233,8 +240,7 @@ final class rupickUITests: XCTestCase {
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         try copyFixture(to: leftRoot)
         try copyFixture(to: rightRoot)
-        let app = XCUIApplication()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(leftRoot.path, in: app)
@@ -303,7 +309,7 @@ final class rupickUITests: XCTestCase {
         try FileManager.default.createDirectory(at: unique, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: root.appendingPathComponent("Incoming/new.png"), to: unique.appendingPathComponent("unique.png"))
         try Data(#"{"images":[{"filename":"unique.png"}]}"#.utf8).write(to: unique.appendingPathComponent("Contents.json"))
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -351,11 +357,11 @@ final class rupickUITests: XCTestCase {
     }
 
     @MainActor
-    func testAddingImagesPreservesInspectionAndReopeningSameProjectStartsFresh() throws {
+    func testAddingImagesAndActivatingSameProjectPreserveInspection() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-lifecycle-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -392,8 +398,9 @@ final class rupickUITests: XCTestCase {
         app.buttons["openProject"].click()
         choose(root.path, in: app)
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
-        XCTAssertFalse(app.descendants(matching: .any)["incoming-renamed.png"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["incoming-renamed.png"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Incoming"].firstMatch.exists)
+        XCTAssertEqual(app.windows.matching(identifier: root.lastPathComponent).count, 1)
         XCTAssertFalse(app.staticTexts["Alternative representation"].exists)
     }
 
@@ -402,7 +409,7 @@ final class rupickUITests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -438,7 +445,7 @@ final class rupickUITests: XCTestCase {
         let original = try Data(contentsOf: root.appendingPathComponent("Incoming/renamed.png"))
         let newContent = try Data(contentsOf: root.appendingPathComponent("Incoming/new.png"))
         try original.write(to: input)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -535,7 +542,7 @@ final class rupickUITests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-empty-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -560,7 +567,7 @@ final class rupickUITests: XCTestCase {
             try image.write(to: entry.appendingPathComponent("image.png"))
             try Data(#"{"images":[{"filename":"image.png","scale":"1x"}]}"#.utf8).write(to: entry.appendingPathComponent("Contents.json"))
         }
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -579,7 +586,7 @@ final class rupickUITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
         try addJPEG(to: root)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -609,7 +616,7 @@ final class rupickUITests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rupick-review-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -683,7 +690,7 @@ final class rupickUITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
         try addJPEG(to: root)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -704,7 +711,7 @@ final class rupickUITests: XCTestCase {
         try copyFixture(to: root)
         try FileManager.default.removeItem(at: root.appendingPathComponent("App/Primary.xcassets/Broken.imageset"))
         try FileManager.default.copyItem(at: root.appendingPathComponent("Incoming/new.png"), to: input)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -733,7 +740,7 @@ final class rupickUITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try copyFixture(to: root)
         try addJPEG(to: root)
-        let app = XCUIApplication()
+        let app = makeApplication()
         app.launch()
         app.buttons["openProject"].click()
         choose(root.path, in: app)
@@ -816,8 +823,7 @@ final class rupickUITests: XCTestCase {
         }
 
         let config = try JSONDecoder().decode(AcceptanceConfig.self, from: Data(contentsOf: configURL))
-        let app = XCUIApplication()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        let app = makeApplication()
         app.launch()
         XCTAssertTrue(app.buttons["openProject"].waitForExistence(timeout: 15))
         app.buttons["openProject"].click()

@@ -84,10 +84,6 @@ final class ProjectWorkspace {
         return try open(identity)
     }
 
-    var openProjects: Set<URL> {
-        Set(sessions.keys)
-    }
-
     func session(for identity: URL) -> ProjectSession {
         if let session = sessions[identity] {
             return session

@@ -8,6 +8,7 @@ struct ContentView: View {
     @Binding var project: URL?
     @Environment(ProjectWorkspace.self) private var workspace
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
     @State private var session = ProjectSession()
     @State private var projectError: String?
     @State private var dropTargeted = false
@@ -267,14 +268,12 @@ struct ContentView: View {
     }
 
     private func routeProject(_ resolve: () throws -> URL) {
-        let alreadyOpen = workspace.openProjects
         do {
             let identity = try resolve()
             projectError = nil
-            if project == nil, alreadyOpen.contains(identity) == false {
-                project = identity
-            } else {
-                openWindow(value: Optional(identity))
+            openWindow(value: identity)
+            if project == nil {
+                dismiss()
             }
         } catch {
             projectError = "Project unavailable. Choose its folder again to restore access."
