@@ -198,7 +198,11 @@ struct ContentView: View {
 
                 do {
                     let restored = try workspace.restore(identity)
-                    session = workspace.session(for: restored)
+                    let restoredSession = workspace.session(for: restored)
+                    if session !== restoredSession {
+                        session.close()
+                        session = restoredSession
+                    }
                     if project != restored {
                         project = restored
                     }
@@ -238,13 +242,15 @@ struct ContentView: View {
     }
 
     private func pickProject() {
+        let openingSession = session
+        let sessionID = openingSession.id
         let panel = NSOpenPanel()
         panel.title = "Choose a project folder"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = false
         panel.begin { response in
-            guard response == .OK, let url = panel.url else {
+            guard response == .OK, openingSession.id == sessionID, let url = panel.url else {
                 return
             }
 
@@ -268,7 +274,7 @@ struct ContentView: View {
             if project == nil, alreadyOpen.contains(identity) == false {
                 project = identity
             } else {
-                openWindow(value: identity)
+                openWindow(value: Optional(identity))
             }
         } catch {
             projectError = "Project unavailable. Choose its folder again to restore access."
@@ -646,7 +652,7 @@ private struct ComparisonDetail: View {
                 if let error = result.error {
                     Text(error).foregroundStyle(.red)
                 } else if session.state == .failed {
-                    Text("Search failed. Open the project folder again to retry.").foregroundStyle(.red)
+                    Text("Search failed. Close this project window, then reopen the folder to retry.").foregroundStyle(.red)
                 } else {
                     Text(result.statusLabel).accessibilityIdentifier("comparisonStatus")
                 }

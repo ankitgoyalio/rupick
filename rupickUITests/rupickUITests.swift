@@ -283,8 +283,9 @@ final class rupickUITests: XCTestCase {
         try FileManager.default.removeItem(at: leftRoot)
         app.windows["Right"].descendants(matching: .any)["recentProjects"].firstMatch.click()
         app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "Left")).firstMatch.click()
-        XCTAssertTrue(app.alerts["Could Not Open Project"].waitForExistence(timeout: 10))
-        app.alerts.buttons["OK"].click()
+        let recovery = app.sheets.buttons["OK"]
+        XCTAssertTrue(recovery.waitForExistence(timeout: 10))
+        recovery.click()
         XCTAssertTrue(app.windows["Right"].staticTexts["projectHeading"].exists)
         XCTAssertEqual(app.windows.matching(identifier: "Left").count, 0)
     }
@@ -721,7 +722,7 @@ final class rupickUITests: XCTestCase {
         choose(input.path, in: app)
         selectIncoming(input.lastPathComponent, in: app)
         XCTAssertTrue(app.staticTexts["Search failed"].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.staticTexts["Search failed. Open the project folder again to retry."].exists)
+        XCTAssertTrue(app.staticTexts["Search failed. Close this project window, then reopen the folder to retry."].exists)
         XCTAssertFalse(app.staticTexts["No matches found"].exists)
         XCTAssertFalse(app.staticTexts["No exact duplicates found"].exists)
     }

@@ -392,7 +392,7 @@ final class ProjectSession {
                 filesChanged("Catalog changes detected. Updating results…")
             }
         } catch {
-            observationError = "Automatic updates are unavailable. Reopen the project folder to try again."
+            observationError = "Automatic updates are unavailable. Close this project window, then reopen the folder to try again."
         }
         return refresh(incoming: incoming)
     }
