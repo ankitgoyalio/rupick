@@ -389,7 +389,7 @@ final class ProjectSession {
                     return
                 }
 
-                catalogChanged()
+                filesChanged("Catalog changes detected. Updating results…")
             }
         } catch {
             observationError = "Automatic updates are unavailable. Reopen the project folder to try again."
@@ -397,7 +397,7 @@ final class ProjectSession {
         return refresh(incoming: incoming)
     }
 
-    private func catalogChanged() {
+    private func filesChanged(_ updatePhase: String) {
         // Reject current completions immediately, including during the quiet period.
         worker?.cancel()
         generation = UUID()
@@ -406,7 +406,7 @@ final class ProjectSession {
         for index in results.indices where results[index].error == nil {
             results[index].status = .comparing
         }
-        phase = "Catalog changes detected. Updating results…"
+        phase = updatePhase
         refreshDelay?.cancel()
         refreshDelay = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
@@ -467,7 +467,7 @@ final class ProjectSession {
 
             // Only the replacement scan can establish the current content version.
             // Reject obsolete work now, and reconcile decisions with that scan's results.
-            catalogChanged()
+            filesChanged("Incoming images changed. Updating results…")
         }
         let token = UUID()
         generation = token
