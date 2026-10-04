@@ -67,6 +67,30 @@ struct ProjectLifecycleTests {
         #expect(access.isBalanced)
     }
 
+    @Test func representationChoiceDuringRestorationPreservesPendingFreshnessBaseline() async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let candidate = AssetCandidate(id: "asset", name: "Asset", location: "Asset.imageset", representations: [
+            Representation(id: "matching", url: first, label: "1x", matches: true),
+            Representation(id: "alternative", url: second, label: "Dark", matches: false),
+        ])
+        let result = IncomingResult(url: first, candidates: [candidate], contentVersion: "unchanged")
+        var review = IncomingReview()
+        review.record(.keepAsNew, for: result)
+        review.representationIDs[candidate.id] = "matching"
+        let restoring = session.restore(root: root, incoming: [first], reviews: [first: review], selection: .incoming(first))
+        await scan.waitForRequests(1)
+        await scan.publish(0, snapshot: ScanSnapshot(results: [result]))
+        session.selectRepresentation(for: first, candidateID: candidate.id, representationID: "alternative")
+        #expect(session.savedReviews[first]?.representationIDs[candidate.id] == "alternative")
+        #expect(session.review(for: first).outcome == nil)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await restoring.value
+        #expect(session.review(for: first).representationIDs[candidate.id] == "alternative")
+        #expect(session.review(for: first).outcome == .keepAsNew)
+        await session.close().value
+    }
+
     @Test func navigationDuringRestorationSupersedesSavedSelection() async {
         let scan = ControlledScan()
         let session = makeSession(scan: scan)

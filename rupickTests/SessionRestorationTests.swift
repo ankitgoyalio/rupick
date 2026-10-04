@@ -203,6 +203,8 @@ struct SessionRestorationTests {
         let representation = try #require(candidate.representations.first(where: { $0.matches }))
         #expect(session.reuseAsset(for: duplicate, candidateID: candidate.id, representationID: representation.id))
         session.keepAsNew(newImage)
+        let alternative = try #require(candidate.representations.first(where: { $0.matches == false }))
+        session.selectRepresentation(for: duplicate, candidateID: candidate.id, representationID: alternative.id)
         session.select(.incoming(newImage))
         workspace.prepareForTermination()
         let restored = ProjectWorkspace(defaults: defaults, bookmarks: .testPaths)
@@ -214,6 +216,7 @@ struct SessionRestorationTests {
         #expect(resumed.selection == .incoming(newImage))
         #expect(resumed.results.map(\.url) == [duplicate, newImage])
         #expect(resumed.review(for: newImage).outcome == .keepAsNew)
+        #expect(resumed.review(for: duplicate).representationIDs[candidate.id] == alternative.id)
         #expect(resumed.review(for: duplicate).outcome == session.review(for: duplicate).outcome)
         await session.close().value
         await resumed.close().value

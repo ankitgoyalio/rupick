@@ -354,6 +354,7 @@ final class ProjectSession {
         }
 
         reviews[incoming, default: IncomingReview()].representationIDs[candidateID] = representationID
+        pendingReviews[incoming]?.representationIDs[candidateID] = representationID
         didChange?()
     }
 
@@ -433,6 +434,7 @@ final class ProjectSession {
             state = .failed
             error = "The project folder is unavailable. Locate its folder to restore access."
             phase = "Search failed"
+            markResultsIncomplete()
             task = Task {}
         } else {
             task = open(root: root, incoming: incoming)
@@ -450,6 +452,7 @@ final class ProjectSession {
         reviews[url] = nil
         pendingReviews[url] = nil
         if selection == .incoming(url) {
+            restoredSelection = nil
             selection = nil
         }
         refresh(incoming: results.map(\.url).filter { $0 != url })
@@ -471,6 +474,7 @@ final class ProjectSession {
         }
         let incoming = results.map { $0.url == original ? replacement : $0.url }
         if selection == .incoming(original) {
+            restoredSelection = nil
             selection = .incoming(replacement)
         }
         refresh(incoming: incoming)
