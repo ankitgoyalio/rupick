@@ -465,6 +465,10 @@ enum CatalogComparison {
                 })
                 snapshot.results[index].contentVersion = incomingFingerprints.last.flatMap { $0 }?.version
             } catch {
+                // Review freshness still follows source bytes when decoding is unavailable.
+                snapshot.results[index].contentVersion = (try? Data(contentsOf: incoming[index])).map {
+                    SHA256.hash(data: $0).description
+                }
                 snapshot.results[index].status = .unreadable
                 incomingFingerprints.append(nil)
                 snapshot.results[index].error = "Could not read this PNG or JPEG. Check file access or choose another image, up to 16 megapixels and 8,192 pixels per side."

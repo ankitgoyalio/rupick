@@ -43,6 +43,24 @@ struct ProjectSessionTests {
         #expect(session.review(for: image).outcome == nil)
     }
 
+    @Test func changedUnreadableIncomingContentRequiresReviewAgain() async throws {
+        let fixture = try FixtureProject()
+        defer { fixture.remove() }
+        let image = fixture.root.appendingPathComponent("unreadable.png")
+        try Data("first unreadable content".utf8).write(to: image)
+        let session = ProjectSession()
+        await session.open(root: fixture.root, incoming: [image]).value
+        #expect(session.results.first?.error != nil)
+        session.keepAsNew(image)
+        #expect(session.review(for: image).outcome == .keepAsNew)
+        try Data("different unreadable content".utf8).write(to: image, options: .atomic)
+        await session.refresh(incoming: [image]).value
+        #expect(session.results.first?.error != nil)
+        #expect(session.review(for: image).outcome == nil)
+        #expect(session.review(for: image).notice == .incomingChanged)
+        await session.close().value
+    }
+
     @Test func reviewRejectsAlternativesAndUnknownIdentities() async throws {
         let fixture = try FixtureProject()
         defer { fixture.remove() }
