@@ -28,9 +28,14 @@ struct ProjectCatalogInventory: Sendable {
         let keys: Set<URLResourceKey> = observingChanges
             ? [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .fileResourceIdentifierKey]
             : [.isDirectoryKey, .isSymbolicLinkKey]
+        func isImageSetLocation(_ url: URL) -> Bool {
+            url.pathComponents.contains { $0.hasSuffix(".imageset") }
+        }
         guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys), errorHandler: { url, _ in
             inventory.metadata[url.path] = "unavailable"
-            inventory.skipped += 1
+            if isImageSetLocation(url) == false {
+                inventory.skipped += 1
+            }
             return true
         }) else {
             inventory.error = "The project folder could not be read. Choose it again."
@@ -45,7 +50,11 @@ struct ProjectCatalogInventory: Sendable {
             }
             guard let values = try? url.resourceValues(forKeys: keys) else {
                 inventory.metadata[url.path] = "unavailable"
-                inventory.skipped += 1
+                // Preparation reports listed metadata and representations. Observation alone
+                // must not double-count those failures or count unused image-set descendants.
+                if isImageSetLocation(url) == false {
+                    inventory.skipped += 1
+                }
                 continue
             }
 
@@ -76,6 +85,10 @@ struct ProjectCatalogInventory: Sendable {
                     }
                 }
             } catch {
+                if isImageSetLocation(url.deletingLastPathComponent()) {
+                    inventory.metadata[url.path] = "unavailable"
+                    continue
+                }
                 inventory.error = "The project's Git ignore rules could not be read. Check folder access and try again."
                 inventory.metadata[url.path] = "unavailable"
                 return inventory
