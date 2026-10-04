@@ -646,7 +646,9 @@ final class rupickUITests: XCTestCase {
 
         let config = try JSONDecoder().decode(AcceptanceConfig.self, from: Data(contentsOf: configURL))
         let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         app.launch()
+        XCTAssertTrue(app.buttons["openProject"].waitForExistence(timeout: 15))
         app.buttons["openProject"].click()
         choose(config.root, in: app)
         if app.buttons["Cancel Search"].exists {
