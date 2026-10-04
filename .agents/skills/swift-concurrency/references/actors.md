@@ -29,7 +29,7 @@ Actors protect mutable state by ensuring only one task accesses it at a time. Th
 ```swift
 actor Counter {
     var value = 0
-    
+
     func increment() {
         value += 1
     }
@@ -47,7 +47,7 @@ actor Counter {
 ```swift
 actor BankAccount {
     var balance: Int = 0
-    
+
     func deposit(_ amount: Int) {
         balance += amount
     }
@@ -178,7 +178,7 @@ func updateUI() {
 ```swift
 func methodB() {
     assert(Thread.isMainThread) // Validate assumption
-    
+
     MainActor.assumeIsolated {
         someMainActorMethod()
     }
@@ -198,7 +198,7 @@ Actor methods are isolated by default:
 ```swift
 actor BankAccount {
     var balance: Double
-    
+
     // Implicitly isolated
     func deposit(_ amount: Double) {
         balance += amount
@@ -270,7 +270,7 @@ Opt out of isolation for immutable data:
 ```swift
 actor BankAccount {
     let accountHolder: String
-    
+
     nonisolated var details: String {
         "Account: \(accountHolder)"
     }
@@ -299,7 +299,7 @@ Clean up actor state on deallocation:
 ```swift
 actor FileDownloader {
     var downloadTask: Task<Void, Error>?
-    
+
     isolated deinit {
         downloadTask?.cancel() // Can call isolated methods
     }
@@ -380,13 +380,13 @@ class C: P {
 ```swift
 actor BankAccount {
     var balance: Double
-    
+
     func deposit(amount: Double) async {
         balance += amount
-        
+
         // ⚠️ Actor unlocked during await
         await logActivity("Deposited \(amount)")
-        
+
         // ⚠️ Balance may have changed!
         print("Balance: \(balance)")
     }
@@ -414,7 +414,7 @@ Complete actor work before suspending:
 func deposit(amount: Double) async {
     balance += amount
     print("Balance: \(balance)") // Before suspension
-    
+
     await logActivity("Deposited \(amount)")
 }
 ```
@@ -500,15 +500,15 @@ func process(
 ```swift
 final class DispatchQueueExecutor: SerialExecutor {
     private let queue: DispatchQueue
-    
+
     init(queue: DispatchQueue) {
         self.queue = queue
     }
-    
+
     func enqueue(_ job: consuming ExecutorJob) {
         let unownedJob = UnownedJob(job)
         let executor = asUnownedSerialExecutor()
-        
+
         queue.async {
             unownedJob.runSynchronously(on: executor)
         }
@@ -517,11 +517,11 @@ final class DispatchQueueExecutor: SerialExecutor {
 
 actor LoggingActor {
     private let executor: DispatchQueueExecutor
-    
+
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         executor.asUnownedSerialExecutor()
     }
-    
+
     init(queue: DispatchQueue) {
         executor = DispatchQueueExecutor(queue: queue)
     }
@@ -549,11 +549,11 @@ import Synchronization
 
 final class Counter {
     private let count = Mutex<Int>(0)
-    
+
     var currentCount: Int {
         count.withLock { $0 }
     }
-    
+
     func increment() {
         count.withLock { $0 += 1 }
     }
@@ -565,7 +565,7 @@ final class Counter {
 ```swift
 final class TouchesCapturer: Sendable {
     let path = Mutex<NSBezierPath>(NSBezierPath())
-    
+
     func storeTouch(_ point: NSPoint) {
         path.withLock { path in
             path.move(to: point)
@@ -618,7 +618,7 @@ func decrement() throws {
 @MainActor
 final class ContentViewModel: ObservableObject {
     @Published var items: [Item] = []
-    
+
     func loadItems() async {
         items = try await api.fetchItems()
     }
@@ -641,11 +641,11 @@ final class ImageProcessor {
 ```swift
 actor DataStore {
     private var items: [Item] = []
-    
+
     func add(_ item: Item) {
         items.append(item)
     }
-    
+
     nonisolated func itemCount() -> Int {
         // ❌ Can't access items
         return 0
@@ -698,4 +698,3 @@ Need thread-safe mutable state?
 ## Further Learning
 
 For migration strategies, advanced patterns, and real-world examples, see [Swift Concurrency Course](https://www.swiftconcurrencycourse.com).
-

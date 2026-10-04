@@ -150,14 +150,14 @@ func fetchUser(id: Int) async throws -> User {
     let url = URL(string: "https://api.example.com/users/\(id)")!
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
-    
+
     let (data, response) = try await URLSession.shared.data(for: request)
-    
+
     guard let httpResponse = response as? HTTPURLResponse,
           (200...299).contains(httpResponse.statusCode) else {
         throw NetworkError.invalidResponse
     }
-    
+
     return try JSONDecoder().decode(User.self, from: data)
 }
 ```
@@ -171,14 +171,14 @@ func createUser(_ user: User) async throws -> User {
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpBody = try JSONEncoder().encode(user)
-    
+
     let (data, response) = try await URLSession.shared.data(for: request)
-    
+
     guard let httpResponse = response as? HTTPURLResponse,
           (200...299).contains(httpResponse.statusCode) else {
         throw NetworkError.invalidResponse
     }
-    
+
     return try JSONDecoder().decode(User.self, from: data)
 }
 ```
@@ -263,4 +263,3 @@ let profile = Profile(
 ## Further Learning
 
 For in-depth coverage of async/await patterns, error handling strategies, and real-world migration scenarios, see [Swift Concurrency Course](https://www.swiftconcurrencycourse.com).
-

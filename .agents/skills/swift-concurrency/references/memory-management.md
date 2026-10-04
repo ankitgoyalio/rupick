@@ -71,7 +71,7 @@ When task captures `self` strongly and `self` owns the task:
 @MainActor
 final class ImageLoader {
     var task: Task<Void, Never>?
-    
+
     func startPolling() {
         task = Task {
             while true {
@@ -184,7 +184,7 @@ func startMonitoring() {
 final class AppLifecycleViewModel {
     private(set) var isActive = false
     private var task: Task<Void, Never>?
-    
+
     func startObserving() {
         task = Task {
             for await _ in NotificationCenter.default.notifications(
@@ -251,7 +251,7 @@ Clean up actor-isolated state in deinit:
 @MainActor
 final class ViewModel {
     private var task: Task<Void, Never>?
-    
+
     isolated deinit {
         task?.cancel()
     }
@@ -309,7 +309,7 @@ func startMonitoring() {
 func startWork() {
     task = Task { [weak self] in
         defer { self?.cleanup() }
-        
+
         while let self = self {
             await self.doWork()
             try? await Task.sleep(for: .seconds(1))
@@ -378,13 +378,13 @@ Task captures self?
 func testViewModelDeallocates() async {
     var viewModel: ViewModel? = ViewModel()
     weak var weakViewModel = viewModel
-    
+
     viewModel?.startWork()
     viewModel = nil
-    
+
     // Give tasks time to complete
     try? await Task.sleep(for: .milliseconds(100))
-    
+
     XCTAssertNil(weakViewModel, "ViewModel should be deallocated")
 }
 ```
@@ -395,9 +395,9 @@ func testViewModelDeallocates() async {
 func testViewDeallocates() {
     var view: MyView? = MyView()
     weak var weakView = view
-    
+
     view = nil
-    
+
     XCTAssertNil(weakView)
 }
 ```
@@ -430,13 +430,13 @@ Task {
 ```swift
 class Manager {
     var task: Task<Void, Never>?
-    
+
     func start() {
         task = Task {
             await self.work() // Retain cycle
         }
     }
-    
+
     // Missing: deinit { task?.cancel() }
 }
 ```
@@ -456,7 +456,7 @@ deinit {
 ```swift
 final class PollingService {
     private var task: Task<Void, Never>?
-    
+
     func start() {
         task = Task { [weak self] in
             while let self = self {
@@ -465,7 +465,7 @@ final class PollingService {
             }
         }
     }
-    
+
     func stop() {
         task?.cancel()
     }
@@ -478,7 +478,7 @@ final class PollingService {
 @MainActor
 final class NotificationObserver {
     private var task: Task<Void, Never>?
-    
+
     func startObserving() {
         task = Task { [weak self] in
             for await notification in NotificationCenter.default.notifications(
@@ -489,7 +489,7 @@ final class NotificationObserver {
             }
         }
     }
-    
+
     isolated deinit {
         task?.cancel()
     }
@@ -501,17 +501,17 @@ final class NotificationObserver {
 ```swift
 final class DownloadManager {
     private var tasks: [URL: Task<Data, Error>] = [:]
-    
+
     func download(_ url: URL) async throws -> Data {
         let task = Task { [weak self] in
             defer { self?.tasks.removeValue(forKey: url) }
             return try await URLSession.shared.data(from: url).0
         }
-        
+
         tasks[url] = task
         return try await task.value
     }
-    
+
     func cancelAll() {
         tasks.values.forEach { $0.cancel() }
         tasks.removeAll()
@@ -524,7 +524,7 @@ final class DownloadManager {
 ```swift
 actor Timer {
     private var task: Task<Void, Never>?
-    
+
     func start(interval: Duration, action: @Sendable () async -> Void) {
         task = Task {
             while !Task.isCancelled {
@@ -533,7 +533,7 @@ actor Timer {
             }
         }
     }
-    
+
     func stop() {
         task?.cancel()
     }
@@ -566,4 +566,3 @@ When object won't deallocate:
 ## Further Learning
 
 For migration strategies, real-world examples, and advanced memory patterns, see [Swift Concurrency Course](https://www.swiftconcurrencycourse.com).
-

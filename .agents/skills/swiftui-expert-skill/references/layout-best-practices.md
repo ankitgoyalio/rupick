@@ -50,7 +50,7 @@ Avoid fixed frames that match one device (for example `.frame(width: 390, height
 // Good - adapts to given space
 struct ProfileCard: View {
     let user: User
-    
+
     var body: some View {
         VStack {
             Image(user.avatar)
@@ -66,7 +66,7 @@ struct ProfileCard: View {
 // Avoid - assumes full screen
 struct ProfileCard: View {
     let user: User
-    
+
     var body: some View {
         VStack {
             Image(user.avatar)
@@ -252,7 +252,7 @@ struct HeaderView: View {
 // Good - caller owns lazy container
 struct FeedView: View {
     let items: [Item]
-    
+
     var body: some View {
         LazyVStack {
             ForEach(items) { item in

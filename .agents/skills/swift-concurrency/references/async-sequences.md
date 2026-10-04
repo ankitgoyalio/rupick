@@ -41,19 +41,19 @@ for await value in someAsyncSequence {
 ```swift
 struct Counter: AsyncSequence, AsyncIteratorProtocol {
     typealias Element = Int
-    
+
     let limit: Int
     var current = 1
-    
+
     mutating func next() async -> Int? {
         guard !Task.isCancelled else { return nil }
         guard current <= limit else { return nil }
-        
+
         let result = current
         current += 1
         return result
     }
-    
+
     func makeAsyncIterator() -> Counter {
         self
     }
@@ -94,11 +94,11 @@ mutating func next() async -> Int? {
     guard !Task.isCancelled else {
         return nil // Stop on cancellation
     }
-    
+
     guard current <= limit else {
         return nil // Stop at limit
     }
-    
+
     return current
 }
 ```
@@ -157,7 +157,7 @@ struct FileDownloader {
         case downloading(Float)
         case finished(Data)
     }
-    
+
     func download(
         _ url: URL,
         progressHandler: @escaping (Float) -> Void,
@@ -222,7 +222,7 @@ AsyncThrowingStream { continuation in
 final class LocationMonitor: NSObject {
     private var continuation: AsyncThrowingStream<CLLocation, Error>.Continuation?
     let stream: AsyncThrowingStream<CLLocation, Error>
-    
+
     override init() {
         var capturedContinuation: AsyncThrowingStream<CLLocation, Error>.Continuation?
         stream = AsyncThrowingStream { continuation in
@@ -230,7 +230,7 @@ final class LocationMonitor: NSObject {
         }
         super.init()
         self.continuation = capturedContinuation
-        
+
         locationManager.delegate = self
         locationManager.startUpdatingLocation()
     }
@@ -242,7 +242,7 @@ extension LocationMonitor: CLLocationManagerDelegate {
             continuation?.yield(location)
         }
     }
-    
+
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         continuation?.finish(throwing: error)
     }
@@ -265,7 +265,7 @@ AsyncThrowingStream<Int, Error> { continuation in
         print("Terminated: \(reason)")
         // Cleanup: remove observers, cancel work, etc.
     }
-    
+
     continuation.yield(1)
     continuation.finish()
 }
@@ -356,7 +356,7 @@ Only receives values emitted after iteration starts:
 ```swift
 let stream = AsyncStream(bufferingPolicy: .bufferingNewest(0)) { continuation in
     continuation.yield(1) // Discarded
-    
+
     Task {
         try await Task.sleep(for: .seconds(2))
         continuation.yield(2) // Received
@@ -387,7 +387,7 @@ struct PingService {
             print("Pinging cancelled")
         }
     }
-    
+
     func ping() async -> Bool {
         // Network request
         return true
@@ -432,7 +432,7 @@ await withTaskGroup(of: Image.self) { group in
     for url in urls {
         group.addTask { await download(url) }
     }
-    
+
     for await image in group {
         display(image)
     }
@@ -572,7 +572,7 @@ func download(_ url: URL) -> AsyncThrowingStream<DownloadEvent, Error> {
                     continuation.yield(.progress(progress))
                     try await Task.sleep(for: .milliseconds(100))
                 }
-                
+
                 let data = try await URLSession.shared.data(from: url).0
                 continuation.yield(.completed(data))
                 continuation.finish()
@@ -594,15 +594,15 @@ func watchDirectory(_ path: String) -> AsyncStream<FileEvent> {
             eventMask: .write,
             queue: .main
         )
-        
+
         source.setEventHandler {
             continuation.yield(.fileChanged(path))
         }
-        
+
         continuation.onTermination = { _ in
             source.cancel()
         }
-        
+
         source.resume()
     }
 }
@@ -707,4 +707,3 @@ func fetchUser() -> AsyncStream<User> { ... } // Overkill for one result
 ## Further Learning
 
 For real-world migration examples, performance patterns, and advanced stream techniques, see [Swift Concurrency Course](https://www.swiftconcurrencycourse.com).
-

@@ -66,13 +66,13 @@ Storing a reference is optional but enables cancellation and result waiting:
 ```swift
 final class ImageLoader {
     var loadTask: Task<UIImage, Error>?
-    
+
     func load() {
         loadTask = Task {
             try await fetchImage()
         }
     }
-    
+
     deinit {
         loadTask?.cancel()
     }
@@ -107,12 +107,12 @@ Add checks at natural breakpoints:
 let task = Task {
     // Before expensive work
     try Task.checkCancellation()
-    
+
     let data = try await URLSession.shared.data(from: url)
-    
+
     // After network, before processing
     try Task.checkCancellation()
-    
+
     return processData(data)
 }
 ```
@@ -184,7 +184,7 @@ Automatically manages task lifetime with view lifecycle:
 ```swift
 struct ContentView: View {
     @State private var data: Data?
-    
+
     var body: some View {
         Text(data?.description ?? "Loading...")
             .task {
@@ -247,7 +247,7 @@ let images = await withTaskGroup(of: UIImage.self) { group in
     for url in photoURLs {
         group.addTask { await downloadPhoto(url: url) }
     }
-    
+
     return await group.reduce(into: []) { $0.append($1) }
 }
 ```
@@ -259,7 +259,7 @@ let images = try await withThrowingTaskGroup(of: UIImage.self) { group in
     for url in photoURLs {
         group.addTask { try await downloadPhoto(url: url) }
     }
-    
+
     // Iterate to propagate errors
     var results: [UIImage] = []
     for try await image in group {
@@ -280,7 +280,7 @@ try await withThrowingTaskGroup(of: Data.self) { group in
     for id in ids {
         group.addTask { try await fetch(id) }
     }
-    
+
     // First error cancels remaining tasks
     while let data = try await group.next() {
         process(data)
@@ -295,7 +295,7 @@ await withTaskGroup(of: Result.self) { group in
     for item in items {
         group.addTask { await process(item) }
     }
-    
+
     // Cancel all remaining tasks
     group.cancelAll()
 }
@@ -356,7 +356,7 @@ extension NotificationCenter {
                 }
                 continuation.finish()
             }
-            
+
             continuation.onTermination = { _ in task.cancel() }
         }
     }
@@ -523,7 +523,7 @@ func search(_ query: String) async {
         searchResults = allResults
         return
     }
-    
+
     do {
         try await Task.sleep(for: .milliseconds(500))
         searchResults = allResults.filter { $0.contains(query) }
@@ -574,16 +574,16 @@ func withTimeout<T>(
 ) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask { try await operation() }
-        
+
         group.addTask {
             try await Task.sleep(for: duration)
             throw TimeoutError()
         }
-        
+
         guard let result = try await group.next() else {
             throw TimeoutError()
         }
-        
+
         group.cancelAll()
         return result
     }
@@ -659,4 +659,3 @@ let profile = Profile(
 ## Further Learning
 
 For hands-on examples, advanced patterns, and migration strategies, see [Swift Concurrency Course](https://www.swiftconcurrencycourse.com).
-

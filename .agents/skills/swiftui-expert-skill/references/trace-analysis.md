@@ -242,7 +242,7 @@ propagated to destination node" in SwiftUI's attribute graph.
 
 Signatures to watch for in `top_sources`:
 
-- **`closure #1 in UserDefaultObserver.Target.GraphAttribute.send()`** , 
+- **`closure #1 in UserDefaultObserver.Target.GraphAttribute.send()`** ,
   an `@AppStorage` / `UserDefaults` write is fanning out to every reader.
   If the destination list contains multiple `@AppStorage <Type>.<prop>`
   entries with thousands of edges each, you have a feedback storm. Fix

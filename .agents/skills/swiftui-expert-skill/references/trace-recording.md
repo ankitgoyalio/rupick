@@ -91,7 +91,7 @@ python3 "${SKILL_DIR}/scripts/record_trace.py" --list-templates
 ```
 
 Device entries have `kind` (`devices`, `devices offline`, `simulators`),
-`name`, `os`, `udid`. Offline devices are known but unplugged / unpaired , 
+`name`, `os`, `udid`. Offline devices are known but unplugged / unpaired ,
 plug them in before recording.
 
 ## Picking a template

@@ -52,9 +52,9 @@ Swift creates only as many threads as CPU cores. Tasks share these threads effic
 ```swift
 func example() async {
     print("Started on: \(Thread.current)")
-    
+
     try await Task.sleep(for: .seconds(1))
-    
+
     print("Resumed on: \(Thread.current)") // Likely different thread
 }
 ```
@@ -148,17 +148,17 @@ The same entry-isolation rule applies to any unstructured task: choose startup i
 ```swift
 actor BankAccount {
     private var balance: Int = 0
-    
+
     func deposit(amount: Int) async {
         balance += amount
         print("Balance: \(balance)")
-        
+
         await logTransaction(amount) // ⚠️ Suspension point
-        
+
         balance += 10 // Bonus
         print("After bonus: \(balance)")
     }
-    
+
     func logTransaction(_ amount: Int) async {
         try? await Task.sleep(for: .seconds(1))
     }
@@ -183,7 +183,7 @@ func deposit(amount: Int) async {
     balance += amount
     balance += 10 // Bonus applied first
     print("Final balance: \(balance)")
-    
+
     await logTransaction(amount) // Suspend after state changes
 }
 ```
@@ -266,9 +266,9 @@ func updateUI() {
 @MainActor
 func updateUI() {
     print("Main thread: \(Thread.current)")
-    
+
     await backgroundTask() // Switches to background
-    
+
     print("Back on main: \(Thread.current)") // Returns to main
 }
 
@@ -443,9 +443,9 @@ Since tasks move between threads unpredictably:
 ```swift
 func example() async {
     print("Thread 1: \(Thread.current)")
-    
+
     await someWork()
-    
+
     print("Thread 2: \(Thread.current)") // Different thread
 }
 ```
@@ -538,4 +538,3 @@ Instead of asking "what thread should this run on?" ask "what isolation domain s
 ## Further Learning
 
 For migration strategies, real-world examples, and advanced threading patterns, see [Swift Concurrency Course](https://www.swiftconcurrencycourse.com).
-

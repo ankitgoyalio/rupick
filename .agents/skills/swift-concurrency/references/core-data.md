@@ -87,7 +87,7 @@ struct ArticleDAO: Sendable, Identifiable {
     let id: NSManagedObjectID
     let title: String
     let timestamp: Date
-    
+
     init?(managedObject: Article) {
         guard let title = managedObject.title,
               let timestamp = managedObject.timestamp else {
@@ -179,27 +179,27 @@ Enforce isolation at API level:
 ```swift
 nonisolated struct CoreDataStore {
     static let shared = CoreDataStore()
-    
+
     let persistentContainer: NSPersistentContainer
     private var viewContext: NSManagedObjectContext {
         persistentContainer.viewContext
     }
-    
+
     private init() {
         persistentContainer = NSPersistentContainer(name: "MyApp")
         persistentContainer.viewContext.automaticallyMergesChangesFromParent = true
-        
+
         Task { [persistentContainer] in
             try? await persistentContainer.loadPersistentStores()
         }
     }
-    
+
     // View context operations (main thread)
     @MainActor
     func perform(_ block: (NSManagedObjectContext) throws -> Void) rethrows {
         try block(viewContext)
     }
-    
+
     // Background operations
     @concurrent
     func performInBackground<T>(
@@ -254,20 +254,20 @@ func deleteAll() async throws {
 ```swift
 final class NSManagedObjectContextExecutor: @unchecked Sendable, SerialExecutor {
     private let context: NSManagedObjectContext
-    
+
     init(context: NSManagedObjectContext) {
         self.context = context
     }
-    
+
     func enqueue(_ job: consuming ExecutorJob) {
         let unownedJob = UnownedJob(job)
         let executor = asUnownedSerialExecutor()
-        
+
         context.perform {
             unownedJob.runSynchronously(on: executor)
         }
     }
-    
+
     func asUnownedSerialExecutor() -> UnownedSerialExecutor {
         UnownedSerialExecutor(ordinary: self)
     }
@@ -280,17 +280,17 @@ final class NSManagedObjectContextExecutor: @unchecked Sendable, SerialExecutor 
 actor CoreDataStore {
     let persistentContainer: NSPersistentContainer
     nonisolated let modelExecutor: NSManagedObjectContextExecutor
-    
+
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         modelExecutor.asUnownedSerialExecutor()
     }
-    
+
     private init() {
         persistentContainer = NSPersistentContainer(name: "MyApp")
         let context = persistentContainer.newBackgroundContext()
         modelExecutor = NSManagedObjectContextExecutor(context: context)
     }
-    
+
     func deleteAll<T: NSManagedObject>(
         using request: NSFetchRequest<T>
     ) throws {
@@ -410,7 +410,7 @@ func deleteAllArticles() async throws {
 @main
 struct MyApp: App {
     let persistentContainer = NSPersistentContainer(name: "MyApp")
-    
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -428,7 +428,7 @@ struct ContentView: View {
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \Article.timestamp, ascending: true)]
     ) private var articles: FetchedResults<Article>
-    
+
     var body: some View {
         List(articles) { article in
             Text(article.title ?? "")
@@ -557,4 +557,3 @@ func save() async {
 For Core Data best practices, migration strategies, and advanced patterns:
 - [Core Data Best Practices](https://github.com/avanderlee/CoreDataBestPractices)
 - [Swift Concurrency Course](https://www.swiftconcurrencycourse.com)
-

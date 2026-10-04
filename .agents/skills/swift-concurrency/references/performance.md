@@ -517,13 +517,13 @@ func process() async {
 @MainActor
 func loadItems() async {
     isLoading = true
-    
+
     for i in 0..<100 {
         let item = await fetchItem(i)
         items.append(item)
         progress = Double(i) / 100 // Incremental updates
     }
-    
+
     isLoading = false
 }
 ```
@@ -657,4 +657,3 @@ actor Store {
 ## Further Learning
 
 For real-world optimization examples, profiling techniques, and advanced performance patterns, see [Swift Concurrency Course](https://www.swiftconcurrencycourse.com).
-

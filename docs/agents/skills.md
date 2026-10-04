@@ -64,7 +64,7 @@ All three new skills are MIT-licensed. Each installed directory includes its ups
 
 Local adaptations:
 
-- Normalize prohibited em dash punctuation in imported text and script messages to commas, preserving licenses verbatim.
+- Normalize prohibited em dash punctuation in imported text and script messages to commas, preserving licenses verbatim. Remove imported trailing whitespace and excess final blank lines.
 - Correct the concurrency router's task-group summary: normal `withTaskGroup` scope exit waits for children rather than automatically cancelling them.
 - Shorten SwiftUI Expert's description to the macOS topics that can trigger it here. Keep its full topic references for selective loading.
 - Narrow `write-swift`, remove its obsolete greeting/toolchain baseline and overlapping sections, and route concurrency/testing to the installed specialists. Treat toolchain-sensitive syntax as requiring verification.

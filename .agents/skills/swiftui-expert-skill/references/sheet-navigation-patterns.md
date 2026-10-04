@@ -176,7 +176,7 @@ enum Route: Hashable {
 ```swift
 struct ContentView: View {
     @State private var navigationPath = NavigationPath()
-    
+
     var body: some View {
         NavigationStack(path: $navigationPath) {
             List {
@@ -373,7 +373,7 @@ MyEditorView()
 ```swift
 struct ContentView: View {
     @State private var showFullScreen = false
-    
+
     var body: some View {
         Button("Show Full Screen") {
             showFullScreen = true
@@ -390,7 +390,7 @@ struct ContentView: View {
 ```swift
 struct ContentView: View {
     @State private var showPopover = false
-    
+
     var body: some View {
         Button("Show Popover") {
             showPopover = true

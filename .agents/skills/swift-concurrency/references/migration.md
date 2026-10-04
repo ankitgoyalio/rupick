@@ -172,9 +172,9 @@ Provide async/await wrappers for existing closure-based APIs:
 
 ```swift
 // Original closure-based API
-@available(*, deprecated, renamed: "fetchImage(urlRequest:)", 
+@available(*, deprecated, renamed: "fetchImage(urlRequest:)",
            message: "Consider using the async/await alternative.")
-func fetchImage(urlRequest: URLRequest, 
+func fetchImage(urlRequest: URLRequest,
                 completion: @escaping @Sendable (Result<UIImage, Error>) -> Void) {
     // ... existing implementation
 }
@@ -377,7 +377,7 @@ Three refactoring options available:
 
 **Before** (closure-based):
 ```swift
-func fetchImage(urlRequest: URLRequest, 
+func fetchImage(urlRequest: URLRequest,
                 completion: @escaping @Sendable (Result<UIImage, Error>) -> Void) {
     URLSession.shared.dataTask(with: urlRequest) { data, _, error in
         do {
@@ -497,7 +497,7 @@ $searchQuery
 ```swift
 func search(_ query: String) {
     currentSearchTask?.cancel()
-    
+
     currentSearchTask = Task {
         do {
             try await Task.sleep(for: .milliseconds(500))
@@ -514,7 +514,7 @@ func search(_ query: String) {
 struct SearchView: View {
     @State private var searchQuery = ""
     @State private var searcher = ArticleSearcher()
-    
+
     var body: some View {
         List(searcher.results) { result in
             Text(result.title)
@@ -561,7 +561,7 @@ Task {
 @MainActor
 final class NotificationObserver {
     private var cancellables: [AnyCancellable] = []
-    
+
     init() {
         NotificationCenter.default.publisher(for: .someNotification)
             .sink { [weak self] _ in
@@ -569,7 +569,7 @@ final class NotificationObserver {
             }
             .store(in: &cancellables)
     }
-    
+
     private func handleNotification() {
         // Expects to run on main actor
     }
@@ -997,7 +997,7 @@ struct RecentBuildsChangedMessage: NotificationCenter.AsyncMessage {
 }
 
 // Enable static member lookup
-extension NotificationCenter.MessageIdentifier 
+extension NotificationCenter.MessageIdentifier
 where Self == NotificationCenter.BaseMessageIdentifier<RecentBuildsChangedMessage> {
     static var recentBuildsChanged: NotificationCenter.BaseMessageIdentifier<RecentBuildsChangedMessage> {
         .init()
@@ -1101,4 +1101,3 @@ The result is **compile-time thread safety**, more maintainable code, and a futu
 - [Approachable Concurrency Video](https://youtu.be/y_Qc8cT-O_g?si=y4C1XQDGtyIOLW81)
 - [Migration Tooling Video](https://youtu.be/FK9XFxSWZPg?si=2z_ybn1t1YCJow5k)
 - [Swift Concurrency Course](https://www.swiftconcurrencycourse.com) for in-depth migration strategies
-

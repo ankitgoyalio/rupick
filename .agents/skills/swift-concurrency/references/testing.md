@@ -78,17 +78,17 @@ When testing unstructured tasks:
 @MainActor
 func searchTaskCompletes() async {
     let searcher = ArticleSearcher()
-    
+
     await withCheckedContinuation { continuation in
         _ = withObservationTracking {
             searcher.results
         } onChange: {
             continuation.resume()
         }
-        
+
         searcher.startSearchTask("swift")
     }
-    
+
     #expect(searcher.results.count > 0)
 }
 ```
@@ -104,18 +104,18 @@ For structured async code:
 @MainActor
 func searchTriggersObservation() async {
     let searcher = ArticleSearcher()
-    
+
     await confirmation { confirm in
         _ = withObservationTracking {
             searcher.results
         } onChange: {
             confirm()
         }
-        
+
         // Must await here for confirmation to work
         await searcher.search("swift")
     }
-    
+
     #expect(!searcher.results.isEmpty)
 }
 ```
@@ -130,16 +130,16 @@ func searchTriggersObservation() async {
 @MainActor
 final class DatabaseTests {
     let database: Database
-    
+
     init() async throws {
         database = Database()
         await database.prepare()
     }
-    
+
     deinit {
         // Synchronous cleanup only
     }
-    
+
     @Test
     func insertsData() async throws {
         try await database.insert(item)
@@ -163,7 +163,7 @@ struct DatabaseTrait: SuiteTrait, TestTrait, TestScoping {
         performing function: () async throws -> Void
     ) async throws {
         let database = Database()
-        
+
         try await Environment.$database.withValue(database) {
             await database.prepare()
             try await function()
@@ -206,12 +206,12 @@ func specificTest() async throws {
 @MainActor
 func isLoadingState() async throws {
     let fetcher = ImageFetcher()
-    
+
     let task = Task { try await fetcher.fetch(url) }
-    
+
     // ❌ Flaky - may pass or fail
     #expect(fetcher.isLoading == true)
-    
+
     try await task.value
     #expect(fetcher.isLoading == false)
 }
@@ -232,13 +232,13 @@ func isLoadingState() async throws {
             await Task.yield() // Allow test to check state
             return Data()
         }
-        
+
         let task = Task { try await fetcher.fetch(url) }
-        
+
         await Task.yield() // Switch to task
-        
+
         #expect(fetcher.isLoading == true) // ✅ Reliable
-        
+
         try await task.value
         #expect(fetcher.isLoading == false)
     }
@@ -283,18 +283,18 @@ final class ArticleSearcherTests: XCTestCase {
 func testSearchTask() async {
     let searcher = ArticleSearcher()
     let expectation = expectation(description: "Search complete")
-    
+
     _ = withObservationTracking {
         searcher.results
     } onChange: {
         expectation.fulfill()
     }
-    
+
     searcher.startSearchTask("swift")
-    
+
     // Use fulfillment, not wait
     await fulfillment(of: [expectation], timeout: 10)
-    
+
     XCTAssertEqual(searcher.results.count, 1)
 }
 ```
@@ -308,7 +308,7 @@ final class DatabaseTests: XCTestCase {
     override func setUp() async throws {
         // Async setup
     }
-    
+
     override func tearDown() async throws {
         // Async teardown
     }
@@ -363,13 +363,13 @@ func actorIsolation() async {
 @Test
 func cancellationStopsWork() async throws {
     let processor = DataProcessor()
-    
+
     let task = Task {
         try await processor.processLargeDataset()
     }
-    
+
     task.cancel()
-    
+
     do {
         try await task.value
         Issue.record("Should have thrown cancellation error")
@@ -386,18 +386,18 @@ func cancellationStopsWork() async throws {
 func debouncedSearch() async throws {
     try await withMainSerialExecutor {
         let searcher = DebouncedSearcher()
-        
+
         searcher.search("a")
         await Task.yield()
-        
+
         searcher.search("ab")
         await Task.yield()
-        
+
         searcher.search("abc")
-        
+
         // Wait for debounce
         try await Task.sleep(for: .milliseconds(600))
-        
+
         #expect(searcher.searchCount == 1) // Only last search executed
     }
 }
@@ -409,19 +409,19 @@ func debouncedSearch() async throws {
 @Test
 func taskGroupProcessesAll() async throws {
     let processor = BatchProcessor()
-    
+
     let results = await withTaskGroup(of: Int.self) { group in
         for i in 1...5 {
             group.addTask { await processor.process(i) }
         }
-        
+
         var collected: [Int] = []
         for await result in group {
             collected.append(result)
         }
         return collected
     }
-    
+
     #expect(results.count == 5)
 }
 ```
@@ -435,12 +435,12 @@ func taskGroupProcessesAll() async throws {
 func viewModelDeallocates() async {
     var viewModel: ViewModel? = ViewModel()
     weak var weakViewModel = viewModel
-    
+
     viewModel?.startWork()
     viewModel = nil
-    
+
     try? await Task.sleep(for: .milliseconds(100))
-    
+
     #expect(weakViewModel == nil)
 }
 ```
@@ -452,10 +452,10 @@ func viewModelDeallocates() async {
 func noRetainCycle() async {
     var manager: Manager? = Manager()
     weak var weakManager = manager
-    
+
     manager?.startLongRunningTask()
     manager = nil
-    
+
     #expect(weakManager == nil)
 }
 ```
@@ -589,4 +589,3 @@ For advanced testing patterns, real-world examples, and migration strategies:
 - [Swift Testing Documentation](https://developer.apple.com/documentation/testing)
 - [Swift Concurrency Extras](https://github.com/pointfreeco/swift-concurrency-extras)
 - [Swift Concurrency Course](https://www.swiftconcurrencycourse.com)
-
