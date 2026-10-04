@@ -24,7 +24,7 @@ struct ContentView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 if session.root == nil {
-                    WelcomeView(notice: projectError ?? session.notice, openProject: pickProject, recents: workspace.recents, reopen: reopenProject)
+                    WelcomeView(notice: projectError ?? workspace.restorationError ?? session.notice, openProject: pickProject, recents: workspace.recents, reopen: reopenProject)
                 } else {
                     NavigationSplitView {
                         VStack(alignment: .leading) {
@@ -82,7 +82,7 @@ struct ContentView: View {
                         if case let .incoming(url) = session.selection,
                            let result = session.results.first(where: { $0.url == url })
                         {
-                            ComparisonDetail(result: result, session: session)
+                            ComparisonDetail(result: result, session: session, locate: { locateIncoming(result.url) })
                         } else if let root = session.root {
                             if case let .group(id) = session.selection,
                                let group = session.duplicateGroups.first(where: { $0.id == id })
@@ -93,7 +93,7 @@ struct ContentView: View {
                                                        description: Text("Choose Images to compare incoming images with this project."))
                             }
                         } else {
-                            WelcomeView(notice: projectError ?? session.notice, openProject: pickProject, recents: workspace.recents, reopen: reopenProject)
+                            WelcomeView(notice: projectError ?? workspace.restorationError ?? session.notice, openProject: pickProject, recents: workspace.recents, reopen: reopenProject)
                         }
                     }
                     .id(session.id)
@@ -136,10 +136,19 @@ struct ContentView: View {
                                 Text(fixtureError).foregroundStyle(.orange)
                             }
                         #endif
+                        if session.state == .failed {
+                            Button("Locate Project…", systemImage: "folder") { locateProject() }
+                                .accessibilityIdentifier("locateProject")
+                        }
+                        if let error = session.persistenceError {
+                            Text(error).foregroundStyle(.orange)
+                            Button("Retry Saving Session") { workspace.saveSessions() }
+                        }
                         SessionProgress(session: session)
                     }
                     .padding()
                     .background(.bar)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("searchFooter")
                 }
             }
@@ -155,6 +164,16 @@ struct ContentView: View {
                 .opacity(dropTargeted ? 1 : 0)
                 .allowsHitTesting(false)
                 .animation(dropTargeted ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: reduceMotion ? 0.1 : 0.125), value: dropTargeted)
+        }
+        .task {
+            if project == nil {
+                for identity in workspace.restoreWindows() {
+                    openWindow(value: identity)
+                }
+                if workspace.restorationIdentities.isEmpty == false {
+                    dismiss()
+                }
+            }
         }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted, perform: acceptDrop)
         .environment(session.thumbnails)
@@ -277,6 +296,41 @@ struct ContentView: View {
             }
         } catch {
             projectError = "Project unavailable. Choose its folder again to restore access."
+        }
+    }
+
+    private func locateProject() {
+        guard let identity = project else {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Locate project folder"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = false
+        let sessionID = session.id
+        panel.begin { response in
+            guard response == .OK, session.id == sessionID, let url = panel.url else {
+                return
+            }
+
+            do { project = try workspace.locateProject(identity, at: url) }
+            catch { projectError = "Project unavailable. Choose its folder again to restore access." }
+        }
+    }
+
+    private func locateIncoming(_ original: URL) {
+        let panel = NSOpenPanel()
+        panel.title = "Locate incoming image"
+        panel.allowedContentTypes = [.png, .jpeg]
+        let sessionID = session.id
+        panel.begin { response in
+            guard response == .OK, session.id == sessionID, let url = panel.url else {
+                return
+            }
+
+            session.locateIncoming(original, at: url)
         }
     }
 
@@ -644,18 +698,29 @@ private struct DuplicateMemberPreview: View {
 private struct ComparisonDetail: View {
     let result: IncomingResult
     let session: ProjectSession
+    let locate: () -> Void
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(result.url.lastPathComponent).font(.title).accessibilityIdentifier("comparisonHeading")
                 if let error = result.error {
                     Text(error).foregroundStyle(.red)
+                    if result.needsRecovery {
+                        ContentUnavailableView {
+                            Label("Image unavailable", systemImage: "photo.badge.exclamationmark")
+                        } description: {
+                            Text("Locate this image to check its content and resume review, or remove it from this session. Removing it leaves files unchanged.")
+                        } actions: {
+                            Button("Locate…", action: locate).accessibilityIdentifier("locateIncoming")
+                            Button("Remove") { session.removeIncoming(result.url) }.accessibilityIdentifier("removeIncoming")
+                        }
+                    }
                 } else if session.state == .failed {
-                    Text("Search failed. Close this project window, then reopen the folder to retry.").foregroundStyle(.red)
+                    Text("Search failed. Locate the project folder to restore access and try again.").foregroundStyle(.red)
                 } else {
                     Text(result.statusLabel).accessibilityIdentifier("comparisonStatus")
                 }
-                ReviewSummary(review: session.review(for: result.url), isRunning: session.isRunning) {
+                ReviewSummary(review: session.review(for: result.url), isRunning: session.isRunning, canReview: session.isRunning == false && result.needsRecovery == false && session.state != .failed) {
                     session.keepAsNew(result.url)
                 }
                 HStack(alignment: .top, spacing: 16) {
@@ -683,6 +748,7 @@ private struct ReviewSummary: View {
     }
 
     let isRunning: Bool
+    let canReview: Bool
     let keepAsNew: () -> Void
 
     var body: some View {
@@ -709,7 +775,7 @@ private struct ReviewSummary: View {
                     .font(.caption)
                     .textSelection(.enabled)
             }
-            Text("Decisions stay in this session. Project files are unchanged.")
+            Text("Decisions are saved locally and checked when this session resumes. Project files are unchanged.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if isRunning {
@@ -730,7 +796,7 @@ private struct ReviewSummary: View {
     private var keepButton: some View {
         Button("Keep as New", action: keepAsNew)
             .accessibilityIdentifier("keepAsNew")
-            .disabled(isRunning)
+            .disabled(canReview == false)
             .help("Record this image as new, including when exact matches exist.")
     }
 }
