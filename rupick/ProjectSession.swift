@@ -166,14 +166,14 @@ enum SidebarSelection: Hashable {
 final class ProjectSession {
     struct Dependencies: Sendable {
         let access: FileAccessAdapter
-        let scan: @Sendable (URL, [URL], @escaping @Sendable (ScanSnapshot) async -> Void) async -> Void
+        let scan: @Sendable (URL, [URL], ProjectCatalogInventory?, @escaping @Sendable (ScanSnapshot) async -> Void) async -> Void
 
         var observation = ProjectObservationAdapter.disabled
 
         static var native: Dependencies {
             let cache = CatalogComparisonCache()
-            return Dependencies(access: .native, scan: { root, incoming, publish in
-                await CatalogComparison.run(root: root, incoming: incoming, cache: cache, publish: publish)
+            return Dependencies(access: .native, scan: { root, incoming, inventory, publish in
+                await CatalogComparison.run(root: root, incoming: incoming, cache: cache, inventory: inventory, publish: publish)
             }, observation: .native)
         }
     }
@@ -374,13 +374,13 @@ final class ProjectSession {
             let publisher = ScanPublisher { [weak self] snapshot in
                 await self?.receive(snapshot, token: token)
             }
-            await observation?.ready()
+            let inventory = await observation?.takeInitialInventory()
             guard Task.isCancelled == false else {
                 await self?.retire(token: token)
                 return
             }
 
-            await scan(root, incoming) { snapshot in await publisher.receive(snapshot) }
+            await scan(root, incoming, inventory) { snapshot in await publisher.receive(snapshot) }
             await publisher.finish()
             access.release()
             await self?.finish(token: token)

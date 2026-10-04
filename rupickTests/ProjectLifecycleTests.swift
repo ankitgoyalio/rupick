@@ -14,7 +14,7 @@ struct ProjectLifecycleTests {
     @Test func observationRejectsOldCompletionDuringQuietPeriodAndAfterClosure() async {
         let scan = ControlledScan()
         var changed: (@MainActor @Sendable () -> Void)?
-        let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, publish in
+        let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, _, publish in
             await scan.run(root: root, incoming: incoming, publish: publish)
         }, observation: ProjectObservationAdapter { _, callback in
             changed = callback
@@ -423,7 +423,7 @@ struct ProjectLifecycleTests {
     #endif
 
     private func makeSession(scan: ControlledScan, access: AccessRecorder = AccessRecorder()) -> ProjectSession {
-        ProjectSession(dependencies: .init(access: access.adapter, scan: { root, incoming, publish in
+        ProjectSession(dependencies: .init(access: access.adapter, scan: { root, incoming, _, publish in
             await scan.run(root: root, incoming: incoming, publish: publish)
         }))
     }

@@ -26,6 +26,20 @@ To repeat native UI acceptance against another project, create `/tmp/rupick-acce
 
 During a large search, navigate existing results, open the image panel, cancel it, and select another incoming image. Confirm progress continues, provisional matches appear, and variant controls remain usable. Compare checksums of catalog contents before and after validation to confirm the project is untouched.
 
+To measure first-pass performance independently of incoming-image and review checks, compile the session benchmark:
+
+```sh
+swiftc -swift-version 6 -parse-as-library -O \
+  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ProjectObservation.swift rupick/ThumbnailStore.swift \
+  rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift rupick/IncomingQueue.swift \
+  scripts/benchmark-project.swift -o /tmp/rupick-benchmark
+/tmp/rupick-benchmark /path/to/project
+```
+
+It reports three fresh-session scans with native observation enabled, each followed by a cached refresh. Timing includes opening the project, establishing observation, discovery, normalization, exact verification, and publishing the completed session. Build time is excluded. Filesystem and OS caches remain intact. Each session starts with empty comparison caches. Compare medians using identical compiler options, the same project, and an idle machine. For Debug measurements, replace `-O` with `-Onone -D DEBUG` and include `rupick/StressFixtures.swift`. The benchmark checks that cached refreshes retain the same ordered duplicate results and reports normalization counts, skipped files, and main-actor heartbeats. Keep output local.
+
+Observation and first-pass comparison share one catalog inventory. Later comparison discovery omits observation metadata and prunes image-set descendants. Image preparation uses at most four actor-owned workers, each retaining its renderer and ignore-rule cache for the scan. Batches bound active decoding and completed preparation; result assembly remains in catalog-path order. Exact normalization and full component verification are unchanged.
+
 The deployment target is macOS 15 on Apple silicon (arm64). Debug and arm64 Release builds validate the deployment target and SDK availability checks. Runtime validation is performed on macOS 26.7.1 with Xcode 27.0 on Apple silicon; a macOS 15 runtime is unavailable in the current environment. Testing on that minimum runtime remains a release validation item, not a claimed test result.
 
 ## Batch acceptance (#5)

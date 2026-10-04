@@ -3,25 +3,126 @@ import CoreServices
 import Darwin
 import Foundation
 
+// MARK: - ProjectCatalogInventory
+
+/// One traversal supplies both the observation baseline and initial catalog discovery.
+struct ProjectCatalogInventory: Sendable {
+    let root: URL
+    var metadata = [String: String]()
+    var entries = [URL]()
+    var skipped = 0
+    var error: String?
+
+    static func read(_ root: URL, observingChanges: Bool = true) -> Self {
+        let root = ProjectFileLocation.canonical(root)
+        let access = FileAccessLease(urls: [root], adapter: .native)
+        defer { access.release() }
+        var inventory = Self(root: root)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            inventory.error = "The project folder is unavailable. Choose it again."
+            inventory.metadata[root.path] = "unavailable"
+            return inventory
+        }
+
+        let keys: Set<URLResourceKey> = observingChanges
+            ? [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .fileResourceIdentifierKey]
+            : [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys), errorHandler: { url, _ in
+            inventory.metadata[url.path] = "unavailable"
+            inventory.skipped += 1
+            return true
+        }) else {
+            inventory.error = "The project folder could not be read. Choose it again."
+            inventory.metadata[root.path] = "unavailable"
+            return inventory
+        }
+
+        let rules = ProjectIgnoreRules(root: root)
+        for case let url as URL in files {
+            if Task.isCancelled {
+                return inventory
+            }
+            guard let values = try? url.resourceValues(forKeys: keys) else {
+                inventory.metadata[url.path] = "unavailable"
+                inventory.skipped += 1
+                continue
+            }
+
+            if values.isSymbolicLink == true || url.lastPathComponent == ".git" {
+                files.skipDescendants()
+                continue
+            }
+            do {
+                let ignored = try rules.ignores(url, isDirectory: values.isDirectory == true)
+                if ignored, observingChanges == false || url.lastPathComponent != ".gitignore" {
+                    if values.isDirectory == true {
+                        files.skipDescendants()
+                    }
+                    continue
+                }
+                if url.pathExtension == "imageset", values.isDirectory == true, ignored == false {
+                    if observingChanges == false {
+                        files.skipDescendants()
+                    }
+                    var parent = url.deletingLastPathComponent()
+                    while parent.path != root.path, parent.pathExtension != "xcassets", parent.pathExtension != "imageset" {
+                        parent.deleteLastPathComponent()
+                    }
+                    if parent.pathExtension == "xcassets",
+                       try rules.ignores(url.appendingPathComponent("Contents.json"), isDirectory: false) == false
+                    {
+                        inventory.entries.append(url)
+                    }
+                }
+            } catch {
+                inventory.error = "The project's Git ignore rules could not be read. Check folder access and try again."
+                inventory.metadata[url.path] = "unavailable"
+                return inventory
+            }
+            if observingChanges, url.lastPathComponent == ".gitignore" || url.pathComponents.contains(where: { $0.hasSuffix(".xcassets") }) {
+                var attributes = stat()
+                let status = url.path.withCString { lstat($0, &attributes) }
+                let changed = status == 0 ? "\(attributes.st_ctimespec.tv_sec):\(attributes.st_ctimespec.tv_nsec)" : "unavailable"
+                inventory.metadata[url.path] = "\(changed):\(values.fileSize ?? 0):\(values.contentModificationDate?.timeIntervalSince1970 ?? 0):\(values.creationDate?.timeIntervalSince1970 ?? 0):\(String(describing: values.fileResourceIdentifier))"
+            }
+        }
+        inventory.entries.sort { $0.path < $1.path }
+        return inventory
+    }
+}
+
 // MARK: - CatalogFileState
 
 /// Metadata reconciliation runs off the UI actor and suppresses duplicate kernel events.
 private actor CatalogFileState {
     private let root: URL
-    private let baseline: Task<[String: String], Never>
+    private let baseline: Task<ProjectCatalogInventory, Never>
+    private var initialInventory: ProjectCatalogInventory?
     private var active = true
     private var previous: [String: String]?
 
     init(root: URL) {
         self.root = root
-        baseline = Task.detached { Self.inventory(root) }
+        baseline = Task.detached { ProjectCatalogInventory.read(root) }
     }
 
     func ready() async {
+        guard previous == nil else {
+            return
+        }
+
         let initial = await baseline.value
         if active, previous == nil {
-            previous = initial
+            previous = initial.metadata
+            initialInventory = initial
         }
+    }
+
+    func takeInitialInventory() async -> ProjectCatalogInventory? {
+        await ready()
+        defer { initialInventory = nil }
+        return initialInventory
     }
 
     func changed() async -> Bool {
@@ -30,12 +131,13 @@ private actor CatalogFileState {
             return false
         }
 
-        let current = Self.inventory(root)
+        let current = ProjectCatalogInventory.read(root).metadata
         guard current != previous else {
             return false
         }
 
         previous = current
+        initialInventory = nil
         return true
     }
 
@@ -47,49 +149,8 @@ private actor CatalogFileState {
         active = false
         baseline.cancel()
         _ = await baseline.value
+        initialInventory = nil
         previous = nil
-    }
-
-    private static func inventory(_ root: URL) -> [String: String] {
-        let access = FileAccessLease(urls: [root], adapter: .native)
-        defer { access.release() }
-        var state = [String: String]()
-        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .fileResourceIdentifierKey]
-        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys), errorHandler: { url, _ in
-            state[url.path] = "unavailable"
-            return true
-        }) else {
-            return [root.path: "unavailable"]
-        }
-
-        let rules = ProjectIgnoreRules(root: root)
-        for case let url as URL in files {
-            if Task.isCancelled {
-                return state
-            }
-            guard let values = try? url.resourceValues(forKeys: keys) else {
-                state[url.path] = "unavailable"
-                continue
-            }
-
-            if values.isSymbolicLink == true || url.lastPathComponent == ".git" {
-                files.skipDescendants()
-                continue
-            }
-            if url.lastPathComponent != ".gitignore", (try? rules.ignores(url, isDirectory: values.isDirectory == true)) == true {
-                if values.isDirectory == true {
-                    files.skipDescendants()
-                }
-                continue
-            }
-            if url.lastPathComponent == ".gitignore" || url.pathComponents.contains(where: { $0.hasSuffix(".xcassets") }) {
-                var attributes = stat()
-                let status = url.path.withCString { lstat($0, &attributes) }
-                let changed = status == 0 ? "\(attributes.st_ctimespec.tv_sec):\(attributes.st_ctimespec.tv_nsec)" : "unavailable"
-                state[url.path] = "\(changed):\(values.fileSize ?? 0):\(values.contentModificationDate?.timeIntervalSince1970 ?? 0):\(values.creationDate?.timeIntervalSince1970 ?? 0):\(String(describing: values.fileResourceIdentifier))"
-            }
-        }
-        return state
     }
 }
 
@@ -117,8 +178,8 @@ final class ProjectObservation {
     private var stream: FSEventStreamRef?
     private let files: CatalogFileState
 
-    func ready() async {
-        await files.ready()
+    func takeInitialInventory() async -> ProjectCatalogInventory? {
+        await files.takeInitialInventory()
     }
 
     func close() async {
