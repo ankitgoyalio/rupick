@@ -14,7 +14,7 @@ For a larger project, use a renamed copy of a known catalog PNG or JPEG and a kn
 
 ```sh
 swiftc -swift-version 6 -parse-as-library \
-  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ProjectObservation.swift rupick/ThumbnailStore.swift \
+  rupick/ProjectSession.swift rupick/SessionArchive.swift rupick/ProjectWorkspace.swift rupick/ProjectResources.swift rupick/ProjectObservation.swift rupick/ThumbnailStore.swift \
   rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift rupick/IncomingQueue.swift \
   scripts/validate-project.swift -o /tmp/rupick-validate
 /tmp/rupick-validate /path/to/project /path/to/duplicate.png /path/to/new.png
@@ -30,7 +30,7 @@ To measure first-pass performance independently of incoming-image and review che
 
 ```sh
 swiftc -swift-version 6 -parse-as-library -O \
-  rupick/ProjectSession.swift rupick/ProjectResources.swift rupick/ProjectObservation.swift rupick/ThumbnailStore.swift \
+  rupick/ProjectSession.swift rupick/SessionArchive.swift rupick/ProjectWorkspace.swift rupick/ProjectResources.swift rupick/ProjectObservation.swift rupick/ThumbnailStore.swift \
   rupick/CatalogComparison.swift rupick/ProjectIgnoreRules.swift rupick/IncomingQueue.swift \
   scripts/benchmark-project.swift -o /tmp/rupick-benchmark
 /usr/bin/time -l /tmp/rupick-benchmark /path/to/project
@@ -92,7 +92,7 @@ Cancel Search retains accepted incoming images and provisional inspection while 
 
 ## Review outcomes (#6)
 
-Use the incoming-image review card to record **Keep as New**, including when candidates exist. Choose an exact matching representation on a candidate and select **Reuse This Asset** to record that catalog-entry identity, location, and matching image file. Alternatives remain inspectable but cannot be recorded as matching reuse. Review controls become available when the search stops; provisional results are still visible during scanning. The sidebar shows reviewed/unreviewed state and the footer counts reviewed incoming images. Navigate away and back to verify the outcome and inspected representation remain selected. Adding incoming images rescans the project while retaining decisions; reopening a closed project resets them. Decisions are session-only and never modify project files.
+Use the incoming-image review card to record **Keep as New**, including when candidates exist. Choose an exact matching representation on a candidate and select **Reuse This Asset** to record that catalog-entry identity, location, and matching image file. Alternatives remain inspectable but cannot be recorded as matching reuse. Review controls become available when the search stops; provisional results are still visible during scanning. The sidebar shows reviewed/unreviewed state and the footer counts reviewed incoming images. Navigate away and back to verify the outcome and inspected representation remain selected. Adding incoming images rescans the project while retaining decisions; reopening a closed project resets them. Decisions never modify project files. Issue #10 adds local persistence for sessions left open when quitting.
 
 Native acceptance exercises both outcomes, keeping as new with candidates, alternative rejection, representation selection retention, and navigation back to a recorded decision. The optional local-project native test exercises the same review flow. ProjectSession coverage verifies catalog identity, matching representation, independent per-image decisions, rescan retention, project reset, invalid identities, and byte-for-byte unchanged fixture contents. The local validation executable also verifies both outcomes, rescan retention, preserved candidates, and unchanged catalog-file hashes.
 
@@ -146,8 +146,21 @@ Deterministic session tests cover both choices, content versions (including unre
 
 The workspace owns canonical project identities and one session per open project. The value-based SwiftUI window group activates an existing window for the same identity. Opening another project creates a separate window with its own catalog observation, incoming queue, selection, comparison cache, thumbnails, progress and review outcomes. Closing one window retires only its session. A late close callback cannot retire a replacement session.
 
-Recent Projects remembers the ten most recently opened folders locally using read-only security-scoped bookmarks. Reopening validates folder readability, renews the bookmark, and starts a fresh session after closure. Unavailable folders retain their recent entry and offer guidance to choose the folder again. Incoming images and review outcomes are not persisted.
+Recent Projects remembers the ten most recently opened folders locally using read-only security-scoped bookmarks. Reopening validates folder readability, renews the bookmark, and starts a fresh session after closure. Unavailable folders retain their recent entry and offer guidance to choose the folder again. Issue #10 adds persistence for incoming images and review outcomes in sessions left open when quitting.
 
 `ProjectWorkspaceTests` covers canonical identity, session reuse and independence, obsolete closure, persistence, and unavailable folders. `testIndependentProjectWindowsAndRecentReopening` opens two fixture copies with overlapping asset names, chooses different incoming images, retains a review outcome when activating an already-open project, closes and reopens through Recent Projects, and reopens a recent folder after relaunch. Use the documented local acceptance configuration for a larger project without storing confidential details in the repository.
 
 Validation for #9 passed all 85 tests with zero failures and zero skips, including 17 native UI tests and local-only larger-project acceptance. The supplemental local validator passed exact matching, duplicate-group consistency, review freshness and unchanged catalog contents. Final arm64 Release build, pinned formatting lint, and separate Standards and Spec reviews passed. Native UI launches ignore saved window state so fixtures remain independent between tests; Recent Projects persistence is still exercised across app relaunch. Confidential configuration, inputs, paths and output artifacts remain outside the repository.
+
+
+## Session restoration and recovery (#10)
+
+Open two project windows, select different incoming images, and record Keep as New in one and Reuse This Asset in the other. Quit with Command-Q, then relaunch. Both windows and their selections resume. Reviews remain unreviewed while access and comparisons are being validated, then return if incoming content and the selected match still satisfy the freshness rules. Explicitly closing a window ends that session, so reopening it starts fresh.
+
+Remove an incoming file while the app is quit. Its entry remains visible with Image unavailable, Locate, and Remove. Locate grants access to a selected PNG or JPEG and checks its content before restoring an outcome. Identical content preserves the decision; changed content shows Review again. Remove changes only session membership. If a project folder or bookmark is unavailable, the project window retains a failed state with Locate Project rather than presenting an empty completed scan. Choose its folder again to resume validation. File or folder picker cancellation leaves the recovery state intact.
+
+`SessionRestorationTests` exercises restoration through the workspace and session interfaces with isolated local storage and real comparison fixtures. It covers both decisions, pending validation, content changes, unavailable bookmarks, missing files, reconnecting identical content, non-destructive removal, failed project access, explicit closure, unsupported archive versions, and storage failure. Native acceptance quits and relaunches two project windows, checks selections and both outcomes, deletes incoming files, and exercises Locate and Remove through native panels. A unique debug-only defaults suite isolates this native restoration test. Other native tests continue to opt out of saved session state.
+
+Storage format and sandbox access choices are documented in [ADR 0002](adr/0002-local-session-restoration.md). SessionStorage is the storage adapter used by the production workspace and failure tests. All private-project inputs, manifests, configuration and validation artifacts remain outside the repository.
+
+Validation for #10 passed all 98 tests (123 runs including parameterized cases), with zero failures and zero skips. This includes 19 native UI tests, two-window quit/relaunch and recovery, and local-only larger-project acceptance. The optimized local validator passed matching, freshness, bookmark restoration, both outcomes and selection retention. The original project's complete regular-file hashes and symbolic-link inventory remained unchanged. The final arm64 Release build and pinned formatting lint passed. Separate Standards and Spec reviews against starting commit `e67d52a7e6d5438df933b3afae5d3564a45fa962` reported zero remaining findings. Confidential configuration, inputs, manifests and test artifacts remain outside the repository.

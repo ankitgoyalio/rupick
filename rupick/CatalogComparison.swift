@@ -469,9 +469,12 @@ enum CatalogComparison {
                 snapshot.results[index].contentVersion = (try? Data(contentsOf: incoming[index])).map {
                     SHA256.hash(data: $0).description
                 }
+                snapshot.results[index].needsRecovery = FileManager.default.isReadableFile(atPath: incoming[index].path) == false
                 snapshot.results[index].status = .unreadable
                 incomingFingerprints.append(nil)
-                snapshot.results[index].error = "Could not read this PNG or JPEG. Check file access or choose another image, up to 16 megapixels and 8,192 pixels per side."
+                snapshot.results[index].error = snapshot.results[index].needsRecovery
+                    ? "This image is missing or inaccessible. Locate it to restore access."
+                    : "Could not read this PNG or JPEG. Check file access or choose another image, up to 16 megapixels and 8,192 pixels per side."
             }
             if snapshot.results[index].error == nil {
                 snapshot.results[index].status = .comparing

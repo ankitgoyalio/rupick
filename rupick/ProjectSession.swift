@@ -3,7 +3,7 @@ import Observation
 
 // MARK: - Representation
 
-struct Representation: Identifiable, Sendable, Equatable {
+struct Representation: Codable, Identifiable, Sendable, Equatable {
     let id: String
     let url: URL
     let label: String
@@ -60,6 +60,7 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
     var error: String?
     var contentVersion: String?
     var status = ComparisonStatus.waiting
+    var needsRecovery = false
 
     var statusText: String {
         String(localized: statusLabel)
@@ -105,7 +106,7 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
 
 // MARK: - ReusedAsset
 
-struct ReusedAsset: Sendable, Equatable {
+struct ReusedAsset: Codable, Sendable, Equatable {
     let candidateID: String
     let name: String
     let location: String
@@ -114,7 +115,7 @@ struct ReusedAsset: Sendable, Equatable {
 
 // MARK: - ReviewOutcome
 
-enum ReviewOutcome: Sendable, Equatable {
+enum ReviewOutcome: Codable, Sendable, Equatable {
     case keepAsNew
     case reuse(ReusedAsset)
 
@@ -136,7 +137,7 @@ enum ReviewOutcome: Sendable, Equatable {
 
 // MARK: - ReviewNotice
 
-enum ReviewNotice: Sendable, Equatable {
+enum ReviewNotice: Codable, Sendable, Equatable {
     case incomingChanged
     case selectedMatchChanged
     case newMatchFound
@@ -168,7 +169,7 @@ enum ReviewNotice: Sendable, Equatable {
 
 // MARK: - IncomingReview
 
-struct IncomingReview: Sendable, Equatable {
+struct IncomingReview: Codable, Sendable, Equatable {
     var outcome: ReviewOutcome?
     var notice: ReviewNotice?
     private var contentVersion: String?
@@ -247,7 +248,7 @@ struct ScanSnapshot: Sendable {
 
 // MARK: - SidebarSelection
 
-enum SidebarSelection: Hashable {
+enum SidebarSelection: Codable, Hashable {
     case group(String)
     case incoming(URL)
 }
@@ -271,6 +272,11 @@ final class ProjectSession {
         }
     }
 
+    @ObservationIgnored var didChange: (() -> Void)?
+    @ObservationIgnored private var blockedIncoming = Set<URL>()
+    @ObservationIgnored private var pendingReviews = [URL: IncomingReview]()
+    @ObservationIgnored private var restoredSelection: SidebarSelection?
+    private(set) var persistenceError: String?
     private(set) var root: URL?
     private(set) var results = [IncomingResult]()
     private(set) var reviews = [URL: IncomingReview]()
@@ -348,11 +354,13 @@ final class ProjectSession {
         }
 
         reviews[incoming, default: IncomingReview()].representationIDs[candidateID] = representationID
+        pendingReviews[incoming]?.representationIDs[candidateID] = representationID
+        didChange?()
     }
 
     @discardableResult
     func reuseAsset(for incoming: URL, candidateID: String, representationID: String) -> Bool {
-        guard isRunning == false,
+        guard isRunning == false, state != .failed,
               let result = results.first(where: { $0.url == incoming }), result.error == nil,
               let candidate = result.candidates.first(where: { $0.id == candidateID }),
               let representation = candidate.representations.first(where: { $0.id == representationID && $0.matches })
@@ -360,17 +368,20 @@ final class ProjectSession {
             return false
         }
 
+        pendingReviews[incoming] = nil
         reviews[incoming, default: IncomingReview()].record(.reuse(candidate: candidate, representation: representation), for: result)
         selectRepresentation(for: incoming, candidateID: candidateID, representationID: representationID)
         return true
     }
 
     func keepAsNew(_ incoming: URL) {
-        guard isRunning == false, let result = results.first(where: { $0.url == incoming }) else {
+        guard isRunning == false, state != .failed, let result = results.first(where: { $0.url == incoming }), result.needsRecovery == false else {
             return
         }
 
+        pendingReviews[incoming] = nil
         reviews[incoming, default: IncomingReview()].record(.keepAsNew, for: result)
+        didChange?()
     }
 
     @discardableResult
@@ -395,6 +406,78 @@ final class ProjectSession {
             observationError = "Automatic updates are unavailable. Close this project window, then reopen the folder to try again."
         }
         return refresh(incoming: incoming)
+    }
+
+    var inaccessibleIncoming: Set<URL> {
+        blockedIncoming
+    }
+
+    var savedReviews: [URL: IncomingReview] {
+        reviews.merging(pendingReviews) { _, pending in pending }
+    }
+
+    func reportPersistenceSaved() {
+        persistenceError = nil
+    }
+
+    func reportPersistenceFailure() {
+        persistenceError = "Session could not be saved. Keep this window open and try again before quitting."
+    }
+
+    @discardableResult
+    func restore(root: URL, incoming: [URL], reviews: [URL: IncomingReview], selection: SidebarSelection?, unavailable: Bool = false, blockedIncoming: Set<URL> = []) -> Task<Void, Never> {
+        let task: Task<Void, Never>
+        if unavailable {
+            close()
+            self.root = root
+            results = incoming.map { IncomingResult(url: $0) }
+            state = .failed
+            error = "The project folder is unavailable. Locate its folder to restore access."
+            phase = "Search failed"
+            markResultsIncomplete()
+            task = Task {}
+        } else {
+            task = open(root: root, incoming: incoming)
+        }
+        self.blockedIncoming = blockedIncoming
+        pendingReviews = reviews
+        restoredSelection = selection
+        self.selection = selection
+        didChange?()
+        return task
+    }
+
+    func removeIncoming(_ url: URL) {
+        blockedIncoming.remove(url)
+        reviews[url] = nil
+        pendingReviews[url] = nil
+        if selection == .incoming(url) {
+            restoredSelection = nil
+            selection = nil
+        }
+        refresh(incoming: results.map(\.url).filter { $0 != url })
+    }
+
+    func locateIncoming(_ original: URL, at replacement: URL) {
+        guard results.contains(where: { $0.url == original }),
+              original == replacement || results.contains(where: { $0.url == replacement }) == false
+        else {
+            return
+        }
+
+        blockedIncoming.remove(original)
+        incomingAccess.removeValue(forKey: original)?.release()
+        let review = pendingReviews.removeValue(forKey: original) ?? reviews.removeValue(forKey: original)
+        reviews[original] = nil
+        if let review {
+            pendingReviews[replacement] = review
+        }
+        let incoming = results.map { $0.url == original ? replacement : $0.url }
+        if selection == .incoming(original) {
+            restoredSelection = nil
+            selection = .incoming(replacement)
+        }
+        refresh(incoming: incoming)
     }
 
     private func filesChanged(_ updatePhase: String) {
@@ -483,6 +566,7 @@ final class ProjectSession {
         discovered = 0; compared = 0; decoded = 0; imageDecodes = 0; skipped = 0; error = nil
         phase = "Discovering image assets…"
         state = .running
+        didChange?()
         // Acquire before scheduling: a close can release window grants before the worker starts.
         let access = FileAccessLease(urls: [root] + incoming, adapter: dependencies.access)
         let scan = dependencies.scan
@@ -526,7 +610,9 @@ final class ProjectSession {
                 return
             }
         }
+        restoredSelection = nil
         self.selection = selection
+        didChange?()
     }
 
     /// Register at submission, before picker or provider callbacks can complete.
@@ -625,6 +711,7 @@ final class ProjectSession {
         thumbnails = ThumbnailStore(access: dependencies.access)
         let temporary = temporaryRoot
         temporaryRoot = nil
+        blockedIncoming = []; pendingReviews = [:]; restoredSelection = nil
         root = nil; results = []; reviews = [:]; duplicateGroups = []; selection = nil; notice = nil
         state = .idle
         discovered = 0; compared = 0; decoded = 0; imageDecodes = 0; skipped = 0; error = nil
@@ -652,11 +739,19 @@ final class ProjectSession {
         return task
     }
 
-    private func receive(_ snapshot: ScanSnapshot, token: UUID) {
+    private func receive(_ update: ScanSnapshot, token: UUID) {
         guard token == generation else {
             return
         }
 
+        var snapshot = update
+        for index in snapshot.results.indices where blockedIncoming.contains(snapshot.results[index].url) {
+            snapshot.results[index].candidates = []
+            snapshot.results[index].contentVersion = nil
+            snapshot.results[index].needsRecovery = true
+            snapshot.results[index].status = .unreadable
+            snapshot.results[index].error = "Access to this image could not be restored. Locate it to grant access again."
+        }
         latestSnapshot = snapshot
         let previous = Dictionary(uniqueKeysWithValues: results.map { ($0.url, $0) })
         // A partial scan cannot yet establish that inspected content has disappeared.
@@ -720,6 +815,15 @@ final class ProjectSession {
             results = snapshot.results; duplicateGroups = snapshot.duplicateGroups
         }
         for result in results {
+            if result.needsRecovery || error != nil {
+                if let review = reviews.removeValue(forKey: result.url) {
+                    pendingReviews[result.url] = review
+                }
+                continue
+            }
+            if let pending = pendingReviews.removeValue(forKey: result.url) {
+                reviews[result.url] = pending
+            }
             guard var review = reviews[result.url] else {
                 continue
             }
@@ -736,7 +840,12 @@ final class ProjectSession {
                 results[index].status = .complete
             }
         }
+        if let restoredSelection {
+            selection = restoredSelection
+            self.restoredSelection = nil
+        }
         reconcileSelection()
+        didChange?()
         phase = error == nil ? "Search complete" : "Search failed"
         worker = nil
     }

@@ -12,6 +12,7 @@ private enum ValidationFailure: Error {
     case inconsistentMembership
     case incomingComparisonFailed
     case reviewFailed
+    case restorationFailed
     case projectChanged
 }
 
@@ -167,6 +168,54 @@ struct ValidateProject {
         else {
             throw ValidationFailure.reviewFailed
         }
+
+        let suite = "rupick-validation-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            throw ValidationFailure.restorationFailed
+        }
+
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let workspace = ProjectWorkspace(defaults: defaults)
+        let identity = try workspace.open(root)
+        let savedSession = workspace.session(for: identity)
+        await savedSession.refresh(incoming: [inputs[0], inputs[1]]).value
+        guard let savedCandidate = savedSession.results[0].candidates.first,
+              let savedRepresentation = savedCandidate.representations.first(where: \.matches),
+              savedSession.reuseAsset(for: inputs[0], candidateID: savedCandidate.id, representationID: savedRepresentation.id)
+        else {
+            throw ValidationFailure.restorationFailed
+        }
+
+        savedSession.keepAsNew(inputs[1])
+        savedSession.select(.incoming(inputs[1]))
+        guard workspace.prepareForTermination() else {
+            throw ValidationFailure.restorationFailed
+        }
+
+        await savedSession.close().value
+        let restored = ProjectWorkspace(defaults: defaults)
+        guard restored.restorationIdentities == [identity], try restored.restore(identity) == identity else {
+            throw ValidationFailure.restorationFailed
+        }
+
+        let resumed = restored.session(for: identity)
+        guard resumed.reviewedCount == 0 else {
+            throw ValidationFailure.restorationFailed
+        }
+
+        await resumed.refresh(incoming: resumed.results.map(\.url)).value
+        guard resumed.results.count == 2, resumed.reviewedCount == 2,
+              ProjectFileLocation.canonical(resumed.results[0].url) == ProjectFileLocation.canonical(inputs[0]),
+              ProjectFileLocation.canonical(resumed.results[1].url) == ProjectFileLocation.canonical(inputs[1]),
+              resumed.selection == .incoming(resumed.results[1].url),
+              resumed.review(for: resumed.results[0].url).outcome == .reuse(candidate: savedCandidate, representation: savedRepresentation),
+              resumed.review(for: resumed.results[1].url).outcome == .keepAsNew
+        else {
+            throw ValidationFailure.restorationFailed
+        }
+
+        await resumed.close().value
+        print("Restoration acceptance passed: native bookmarks, both validated outcomes and selection resumed through the workspace and session interfaces.")
 
         let after = try catalogContents(root)
         guard before == after else {

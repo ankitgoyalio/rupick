@@ -1,6 +1,6 @@
 # Rupick
 
-Your Xcode asset companion. Open a project folder to discover exact duplicate content among existing image assets. Inspect group members and their representations side by side, or choose or drop incoming PNG or JPEG images to compare with the project. All analysis runs locally, and project assets are read only.
+Your Xcode asset companion. Open a project folder to discover exact duplicate content among existing image assets. Inspect group members and their representations side by side, or choose or drop incoming PNG or JPEG images to compare with the project. All analysis runs locally, and project assets are read only. Quit and relaunch to resume open project windows, incoming images, selections, and valid review decisions. Rupick checks file access and content before restoring a decision. Use Locate for an unavailable incoming image or Locate Project for an unavailable folder. Remove takes an incoming image out of the session and leaves files unchanged. Closing a project window ends its session.
 
 Requires an Apple silicon Mac running macOS 15 or later and Xcode with Swift 6 support. Open `rupick.xcodeproj`, select the `rupick` scheme, and run on My Mac. Local builds use ad-hoc signing; no developer account is needed. See [the implementation decision](docs/adr/0001-native-exact-image-comparison.md) for sandbox, colour, orientation, and decoding policies.
 

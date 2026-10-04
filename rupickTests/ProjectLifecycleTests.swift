@@ -11,6 +11,98 @@ struct ProjectLifecycleTests {
     private let first = URL(fileURLWithPath: "/incoming/first.png")
     private let second = URL(fileURLWithPath: "/incoming/second.jpe")
 
+    @Test(arguments: [false, true]) func explicitDecisionSupersedesPendingReviewAfterCancellingRestoration(wasReused: Bool) async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let candidate = group("match").members[0]
+        let representation = candidate.representations[0]
+        let result = IncomingResult(url: first, candidates: [candidate], contentVersion: "unchanged")
+        var saved = IncomingReview()
+        saved.record(wasReused ? .reuse(candidate: candidate, representation: representation) : .keepAsNew, for: result)
+        let restoring = session.restore(root: root, incoming: [first], reviews: [first: saved], selection: .incoming(first))
+        await scan.waitForRequests(1)
+        await scan.publish(0, snapshot: ScanSnapshot(results: [result]))
+        session.cancel()
+        let expected: ReviewOutcome
+        if wasReused {
+            session.keepAsNew(first)
+            expected = .keepAsNew
+        } else {
+            #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: representation.id))
+            expected = .reuse(candidate: candidate, representation: representation)
+        }
+        #expect(session.savedReviews[first]?.outcome == expected)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await restoring.value
+        let refresh = session.refresh(incoming: [first])
+        await scan.waitForRequests(2)
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result]))
+        await refresh.value
+        #expect(session.review(for: first).outcome == expected)
+        await session.close().value
+    }
+
+    @Test func locatingSameURLRetainsNewGrantAfterWorkerFinishes() async {
+        let scan = ControlledScan()
+        let access = AccessRecorder(denied: [first])
+        let session = makeSession(scan: scan, access: access)
+        let restoring = session.restore(root: root, incoming: [first], reviews: [:], selection: .incoming(first), blockedIncoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: snapshot(incoming: [first]))
+        await restoring.value
+        #expect(session.results[0].needsRecovery)
+        access.grant(first)
+        session.locateIncoming(first, at: first)
+        await scan.waitForRequests(2)
+        await scan.complete(1, snapshot: snapshot(incoming: [first]))
+        // A completed state means worker access has been released before publication.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while session.isRunning, clock.now < deadline {
+            await Task.yield()
+        }
+        #expect(session.isRunning == false)
+        #expect(access.active(first) == 1)
+        await session.close().value
+        #expect(access.isBalanced)
+    }
+
+    @Test func representationChoiceDuringRestorationPreservesPendingFreshnessBaseline() async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let candidate = AssetCandidate(id: "asset", name: "Asset", location: "Asset.imageset", representations: [
+            Representation(id: "matching", url: first, label: "1x", matches: true),
+            Representation(id: "alternative", url: second, label: "Dark", matches: false),
+        ])
+        let result = IncomingResult(url: first, candidates: [candidate], contentVersion: "unchanged")
+        var review = IncomingReview()
+        review.record(.keepAsNew, for: result)
+        review.representationIDs[candidate.id] = "matching"
+        let restoring = session.restore(root: root, incoming: [first], reviews: [first: review], selection: .incoming(first))
+        await scan.waitForRequests(1)
+        await scan.publish(0, snapshot: ScanSnapshot(results: [result]))
+        session.selectRepresentation(for: first, candidateID: candidate.id, representationID: "alternative")
+        #expect(session.savedReviews[first]?.representationIDs[candidate.id] == "alternative")
+        #expect(session.review(for: first).outcome == nil)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await restoring.value
+        #expect(session.review(for: first).representationIDs[candidate.id] == "alternative")
+        #expect(session.review(for: first).outcome == .keepAsNew)
+        await session.close().value
+    }
+
+    @Test func navigationDuringRestorationSupersedesSavedSelection() async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let restoring = session.restore(root: root, incoming: [first, second], reviews: [:], selection: .incoming(first))
+        await scan.waitForRequests(1)
+        session.select(.incoming(second))
+        await scan.complete(0, snapshot: snapshot(incoming: [first, second]))
+        await restoring.value
+        #expect(session.selection == .incoming(second))
+        await session.close().value
+    }
+
     @Test func observationRejectsOldCompletionDuringQuietPeriodAndAfterClosure() async {
         let scan = ControlledScan()
         var changed: (@MainActor @Sendable () -> Void)?
@@ -658,15 +750,19 @@ private final class AccessRecorder: Sendable {
     }
 
     private let counts = Mutex(Counts())
-    private let denied: Set<URL>
+    private let denied: Mutex<Set<URL>>
 
     init(denied: Set<URL> = []) {
-        self.denied = denied
+        self.denied = Mutex(denied)
+    }
+
+    func grant(_ url: URL) {
+        denied.withLock { $0.remove(url) }
     }
 
     var adapter: FileAccessAdapter {
         FileAccessAdapter(acquire: { [self] url in
-            guard denied.contains(url) == false else {
+            guard denied.withLock({ $0.contains(url) }) == false else {
                 return false
             }
 
