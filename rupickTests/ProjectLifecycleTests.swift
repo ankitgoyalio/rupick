@@ -11,6 +11,41 @@ struct ProjectLifecycleTests {
     private let first = URL(fileURLWithPath: "/incoming/first.png")
     private let second = URL(fileURLWithPath: "/incoming/second.jpe")
 
+    @Test func observationRejectsOldCompletionDuringQuietPeriodAndAfterClosure() async {
+        let scan = ControlledScan()
+        var changed: (@MainActor @Sendable () -> Void)?
+        let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, publish in
+            await scan.run(root: root, incoming: incoming, publish: publish)
+        }, observation: ProjectObservationAdapter { _, callback in
+            changed = callback
+            return nil
+        }))
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.publish(0, snapshot: snapshot(incoming: [first], groups: [group("retained")]))
+        changed?()
+        changed?()
+        changed?()
+        #expect(session.state == .running)
+        #expect(session.duplicateGroups.first?.id == "retained")
+        await scan.complete(0, snapshot: snapshot(incoming: [first], groups: [group("obsolete")]))
+        await opening.value
+        #expect(session.duplicateGroups.first?.id == "retained")
+        await scan.waitForRequests(2)
+        await scan.complete(1, snapshot: snapshot(incoming: [first], groups: [group("current")]))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while session.isRunning, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(session.state == .complete)
+        #expect(session.duplicateGroups.first?.id == "current")
+        let closed = session.close()
+        changed?()
+        await closed.value
+        #expect(session.state == .idle)
+        #expect(session.duplicateGroups.isEmpty)
+    }
+
     @Test func reopeningSameFolderStartsFreshAndRejectsOldIntake() async throws {
         let scan = ControlledScan()
         let access = AccessRecorder()

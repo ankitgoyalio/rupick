@@ -2,6 +2,7 @@ import CoreImage
 import CryptoKit
 import Foundation
 import ImageIO
+import Synchronization
 import UniformTypeIdentifiers
 
 // MARK: - NormalizedImage
@@ -11,8 +12,8 @@ private struct NormalizedImage {
     let width: Int
     let height: Int
 
-    init(url: URL) throws {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+    init(data: Data) throws {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let type = CGImageSourceGetType(source),
               [UTType.png.identifier, UTType.jpeg.identifier].contains(type as String),
               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -35,14 +36,10 @@ private struct NormalizedImage {
 
 // MARK: - DecodedPixels
 
-private struct DecodedPixels: Equatable {
+private struct DecodedPixels: Equatable, Sendable {
     let width: Int
     let height: Int
     let values: [Float]
-
-    init(url: URL, context: CIContext) throws {
-        try self.init(image: NormalizedImage(url: url), context: context)
-    }
 
     init(image: NormalizedImage, context: CIContext) {
         let width = image.width
@@ -107,10 +104,55 @@ private struct ContentBucket {
     var members = [AssetCandidate]()
 }
 
+// MARK: - CatalogComparisonCache
+
+/// Per-session cache. Byte identity handles atomic replacement and preserved timestamps.
+/// Only immutable pixels cross workers; both entry count and decoded memory are bounded.
+final class CatalogComparisonCache: Sendable {
+    private struct Entry: Sendable {
+        let digest: SHA256.Digest
+        let pixels: DecodedPixels
+        let source: Data
+        var cost: Int {
+            pixels.values.count * MemoryLayout<Float>.size + source.count
+        }
+    }
+
+    private let entries = Mutex<[Entry]>([])
+
+    fileprivate func pixels(url: URL, context: CIContext) throws -> DecodedPixels {
+        let data = try Data(contentsOf: url)
+        let digest = SHA256.hash(data: data)
+        if let cached = entries.withLock({ entries -> DecodedPixels? in
+            guard let index = entries.firstIndex(where: { $0.digest == digest && $0.source == data }) else {
+                return nil
+            }
+
+            let entry = entries.remove(at: index)
+            entries.append(entry)
+            return entry.pixels
+        }) {
+            return cached
+        }
+        let pixels = try DecodedPixels(image: NormalizedImage(data: data), context: context)
+        let entry = Entry(digest: digest, pixels: pixels, source: data)
+        if entry.cost <= 32 * 1024 * 1024 {
+            entries.withLock { entries in
+                entries.removeAll { $0.digest == digest }
+                while entries.isEmpty == false, entries.count >= 128 || entries.reduce(0, { $0 + $1.cost }) + entry.cost > 32 * 1024 * 1024 {
+                    entries.removeFirst()
+                }
+                entries.append(entry)
+            }
+        }
+        return pixels
+    }
+}
+
 // MARK: - CatalogComparison
 
 enum CatalogComparison {
-    static func run(root: URL, incoming: [URL], publish: @Sendable (ScanSnapshot) async -> Void) async {
+    static func run(root: URL, incoming: [URL], cache: CatalogComparisonCache = CatalogComparisonCache(), publish: @Sendable (ScanSnapshot) async -> Void) async {
         var snapshot = ScanSnapshot(results: incoming.map { IncomingResult(url: $0) })
         let boundary = root.resolvingSymlinksInPath().standardizedFileURL
         var isDirectory: ObjCBool = false
@@ -186,7 +228,7 @@ enum CatalogComparison {
             await publish(snapshot)
             do {
                 try incomingFingerprints.append(autoreleasepool {
-                    try PixelFingerprint(DecodedPixels(url: incoming[index], context: context))
+                    try PixelFingerprint(cache.pixels(url: incoming[index], context: context))
                 })
             } catch {
                 snapshot.results[index].status = .unreadable
@@ -238,15 +280,14 @@ enum CatalogComparison {
                     }
                     let representationID = url.path + "#" + String(imageIndex)
                     let matchingInputs: Set<Int>? = autoreleasepool { () -> Set<Int>? in
-                        guard let normalized = try? NormalizedImage(url: url) else {
+                        guard let pixels = try? cache.pixels(url: url, context: context) else {
                             return nil
                         }
 
-                        let pixels = DecodedPixels(image: normalized, context: context)
                         let fingerprint = PixelFingerprint(pixels)
                         var contentBuckets = buckets[fingerprint, default: []]
                         let bucketIndex = contentBuckets.firstIndex {
-                            (try? DecodedPixels(url: $0.reference, context: context)) == pixels
+                            (try? cache.pixels(url: $0.reference, context: context)) == pixels
                         } ?? contentBuckets.count
                         if bucketIndex == contentBuckets.count {
                             contentBuckets.append(ContentBucket(reference: url))
@@ -259,7 +300,7 @@ enum CatalogComparison {
                                 return false
                             }
 
-                            return (try? DecodedPixels(url: incoming[index], context: context)) == pixels
+                            return (try? cache.pixels(url: incoming[index], context: context)) == pixels
                         })
                     }
                     if matchingInputs == nil {

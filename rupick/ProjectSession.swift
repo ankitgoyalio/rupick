@@ -167,9 +167,14 @@ final class ProjectSession {
         let access: FileAccessAdapter
         let scan: @Sendable (URL, [URL], @escaping @Sendable (ScanSnapshot) async -> Void) async -> Void
 
-        static let native = Dependencies(access: .native, scan: { root, incoming, publish in
-            await CatalogComparison.run(root: root, incoming: incoming, publish: publish)
-        })
+        var observation = ProjectObservationAdapter.disabled
+
+        static var native: Dependencies {
+            let cache = CatalogComparisonCache()
+            return Dependencies(access: .native, scan: { root, incoming, publish in
+                await CatalogComparison.run(root: root, incoming: incoming, cache: cache, publish: publish)
+            }, observation: .native)
+        }
     }
 
     private(set) var root: URL?
@@ -178,6 +183,7 @@ final class ProjectSession {
     private(set) var duplicateGroups = [DuplicateGroup]()
     private(set) var state = SearchState.idle
     private(set) var thumbnails: ThumbnailStore
+    private(set) var observationError: String?
     private(set) var notice: String?
     private(set) var selection: SidebarSelection?
     /// Also resets view-local inspection state when the same folder is reopened.
@@ -203,6 +209,8 @@ final class ProjectSession {
     private(set) var phase = "Choose a project folder to begin."
     private(set) var error: String?
     @ObservationIgnored private let dependencies: Dependencies
+    @ObservationIgnored private var observation: ProjectObservation?
+    @ObservationIgnored private var refreshDelay: Task<Void, Never>?
     @ObservationIgnored private var worker: Task<Void, Never>?
     @ObservationIgnored private var workers = [UUID: Task<Void, Never>]()
     @ObservationIgnored private var generation = UUID()
@@ -222,6 +230,7 @@ final class ProjectSession {
 
     deinit {
         workers.values.forEach { $0.cancel() }
+        refreshDelay?.cancel()
     }
 
     var reviewedCount: Int {
@@ -274,7 +283,41 @@ final class ProjectSession {
         close()
         self.root = root
         projectAccess = FileAccessLease(urls: [root], adapter: dependencies.access)
+        let sessionID = id
+        do {
+            observation = try dependencies.observation.start(root) { [weak self] in
+                guard let self, id == sessionID else {
+                    return
+                }
+
+                catalogChanged()
+            }
+        } catch {
+            observationError = "Automatic updates are unavailable. Reopen the project folder to try again."
+        }
         return refresh(incoming: incoming)
+    }
+
+    private func catalogChanged() {
+        // Reject current completions immediately, including during the quiet period.
+        worker?.cancel()
+        generation = UUID()
+        latestSnapshot = nil
+        state = .running
+        for index in results.indices where results[index].error == nil {
+            results[index].status = .comparing
+        }
+        phase = "Catalog changes detected. Updating results…"
+        refreshDelay?.cancel()
+        refreshDelay = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            guard let self, Task.isCancelled == false else {
+                return
+            }
+
+            refreshDelay = nil
+            refresh(incoming: results.map(\.url))
+        }
     }
 
     #if DEBUG
@@ -294,6 +337,8 @@ final class ProjectSession {
             return Task {}
         }
 
+        refreshDelay?.cancel()
+        refreshDelay = nil
         retiredPreviews.append(thumbnails.close())
         thumbnails = ThumbnailStore(access: dependencies.access)
         worker?.cancel()
@@ -320,11 +365,17 @@ final class ProjectSession {
         // Acquire before scheduling: a close can release window grants before the worker starts.
         let access = FileAccessLease(urls: [root] + incoming, adapter: dependencies.access)
         let scan = dependencies.scan
+        let observation = observation
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             defer { access.release() }
             let publisher = ScanPublisher { [weak self] snapshot in
                 await self?.receive(snapshot, token: token)
             }
+            await observation?.ready()
+            guard Task.isCancelled == false else {
+                return
+            }
+
             await scan(root, incoming) { snapshot in await publisher.receive(snapshot) }
             await publisher.finish()
             access.release()
@@ -408,6 +459,8 @@ final class ProjectSession {
 
         incomingQueue.reset()
         hasPendingIncoming = false
+        refreshDelay?.cancel()
+        refreshDelay = nil
         worker?.cancel()
         worker = nil
         generation = UUID()
@@ -420,6 +473,12 @@ final class ProjectSession {
     /// Returns when retired workers and previews have released their own grants.
     @discardableResult
     func close() -> Task<Void, Never> {
+        let retiredObservation = observation
+        retiredObservation?.stop()
+        observation = nil
+        observationError = nil
+        refreshDelay?.cancel()
+        refreshDelay = nil
         worker?.cancel()
         workers.values.forEach { $0.cancel() }
         let retiring = Array(workers.values)
@@ -446,6 +505,7 @@ final class ProjectSession {
         let previousCleanup = cleanup
         let task = Task { [weak self] in
             await previousCleanup?.value
+            await retiredObservation?.close()
             for task in retiring {
                 await task.value
             }
@@ -540,6 +600,15 @@ final class ProjectSession {
                 let representation = candidate.representations.first { $0.id == selected } ?? candidate.representations.first(where: \.matches)
                 return representation.map { (candidate.id, $0.id) }
             })
+            if case let .reuse(asset) = review.outcome {
+                if let candidate = result.candidates.first(where: { $0.id == asset.candidateID }),
+                   let representation = candidate.representations.first(where: { $0.id == asset.representation.id && $0.matches })
+                {
+                    review.outcome = .reuse(candidate: candidate, representation: representation)
+                } else {
+                    review.outcome = nil
+                }
+            }
             reviews[result.url] = review
         }
         latestSnapshot = nil

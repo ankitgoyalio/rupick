@@ -308,17 +308,17 @@ final class rupickUITests: XCTestCase {
         let metadata = root.appendingPathComponent("App/Primary.xcassets/Icon.imageset/Contents.json")
         let originalMetadata = try Data(contentsOf: metadata)
         try Data(#"{"images":[{"filename":"light.png","scale":"1x"}]}"#.utf8).write(to: metadata)
-        app.buttons["chooseImages"].click()
-        choose(root.appendingPathComponent("Incoming/new.png").path, in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["incoming-new.png"].firstMatch.waitForExistence(timeout: 30))
+        let alternativeRemoved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                           object: app.staticTexts["Alternative representation"])
+        XCTAssertEqual(XCTWaiter.wait(for: [alternativeRemoved], timeout: 30), .completed)
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
-        XCTAssertFalse(app.staticTexts["Alternative representation"].exists)
         // Restoring the alternative must not resurrect the discarded selection.
         try originalMetadata.write(to: metadata)
-        app.buttons["chooseImages"].click()
-        choose(root.appendingPathComponent("Incoming/hidden-colour.png").path, in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["incoming-hidden-colour.png"].firstMatch.waitForExistence(timeout: 30))
+        picker.click()
+        let restoredAlternative = app.menuItems.matching(NSPredicate(format: "title CONTAINS %@", "Alternative")).firstMatch
+        XCTAssertTrue(restoredAlternative.waitForExistence(timeout: 30))
+        app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Alternative representation"].exists)
         selectIncoming("renamed.png", in: app)
@@ -329,6 +329,34 @@ final class rupickUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["incoming-renamed.png"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Exact duplicate content"].exists)
         XCTAssertFalse(app.staticTexts["Alternative representation"].exists)
+    }
+
+    @MainActor
+    func testCatalogAdditionsDeletionsAndRapidEditsUpdateAutomatically() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try copyFixture(to: root)
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["openProject"].click()
+        choose(root.path, in: app)
+        XCTAssertTrue(app.staticTexts["Search complete"].waitForExistence(timeout: 30))
+        let catalog = root.appendingPathComponent("Added.xcassets")
+        try FileManager.default.copyItem(at: root.appendingPathComponent("Packages/Other.xcassets"), to: catalog)
+        XCTAssertTrue(app.staticTexts["4 / 4 assets compared"].waitForExistence(timeout: 30))
+        let image = catalog.appendingPathComponent("Icon.imageset/light.png")
+        let original = try Data(contentsOf: image)
+        for _ in 0 ..< 8 {
+            try Data("invalid".utf8).write(to: image, options: .atomic)
+        }
+        XCTAssertTrue(app.staticTexts["Incomplete scan: 2 unreadable or unsupported catalog entries or images were skipped."].waitForExistence(timeout: 30))
+        try original.write(to: image, options: .atomic)
+        XCTAssertTrue(app.staticTexts["Incomplete scan: 1 unreadable or unsupported catalog entries or images were skipped."].waitForExistence(timeout: 30))
+        try FileManager.default.removeItem(at: catalog)
+        XCTAssertTrue(app.staticTexts["3 / 3 assets compared"].waitForExistence(timeout: 30))
+        try FileManager.default.removeItem(at: root.appendingPathComponent("Packages"))
+        XCTAssertTrue(app.staticTexts["0 exact duplicate groups"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["2 / 2 assets compared"].waitForExistence(timeout: 30))
     }
 
     @MainActor

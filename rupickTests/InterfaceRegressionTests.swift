@@ -37,6 +37,79 @@
             #expect(session.state == .complete)
         }
 
+        @Test func catalogDeletionAutomaticallyReconcilesResults() async throws {
+            let root = try StressDataset.demo.makeProject()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let session = ProjectSession()
+            await session.open(root: root).value
+            #expect(session.duplicateGroups.count == 1)
+            try FileManager.default.removeItem(at: root.appendingPathComponent("Packages"))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+            while session.duplicateGroups.isEmpty == false, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(session.duplicateGroups.isEmpty)
+            #expect(session.state == .complete)
+            await session.close().value
+        }
+
+        @Test func catalogEditsReconcileFinalContentMetadataAndCompleteness() async throws {
+            let root = try StressDataset.demo.makeProject()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let session = ProjectSession()
+            await session.open(root: root).value
+            let catalog = root.appendingPathComponent("Added.xcassets")
+            let entry = catalog.appendingPathComponent("Added.imageset")
+            let source = try #require(session.duplicateGroups.first?.members.first?.representations.first(where: \.matches)?.url)
+            let incoming = root.appendingPathComponent("incoming.png")
+            try FileManager.default.copyItem(at: source, to: incoming)
+            await session.refresh(incoming: [incoming]).value
+            let initialCount = session.discovered
+            let initialMatches = session.results[0].candidates.count
+            try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+            let image = entry.appendingPathComponent("image.png")
+            try FileManager.default.copyItem(at: source, to: image)
+            let metadata = entry.appendingPathComponent("Contents.json")
+            try Data(#"{"images":[{"filename":"image.png","scale":"2x"}]}"#.utf8).write(to: metadata)
+            try await eventually { session.state == .complete && session.discovered == initialCount + 1 }
+            #expect(session.results[0].candidates.count == initialMatches + 1)
+            let candidate = try #require(session.results[0].candidates.first { $0.id == entry.path })
+            #expect(candidate.representations[0].label.contains("2x"))
+            #expect(session.reuseAsset(for: incoming, candidateID: candidate.id, representationID: candidate.representations[0].id))
+            let oldPreview = session.thumbnails.id
+            try Data(#"{"images":[{"filename":"image.png","scale":"3x"}]}"#.utf8).write(to: metadata, options: .atomic)
+            try await eventually { session.state == .complete && session.results[0].candidates.first(where: { $0.id == entry.path })?.representations[0].label.contains("3x") == true }
+            #expect(session.thumbnails.id != oldPreview)
+            // Burst corruption followed by a final corrupt file must remain isolated.
+            for _ in 0 ..< 8 {
+                try Data("broken".utf8).write(to: image, options: .atomic)
+            }
+            try await eventually { session.state == .complete && session.skipped > 0 }
+            #expect(session.results[0].status == .incomplete)
+            #expect(session.results[0].candidates.count == initialMatches)
+            #expect(session.review(for: incoming).outcome == nil)
+            try FileManager.default.copyItem(at: source, to: entry.appendingPathComponent("restored.png"))
+            try Data(#"{"images":[{"filename":"restored.png","scale":"1x"}]}"#.utf8).write(to: metadata)
+            try await eventually { session.state == .complete && session.skipped == 0 && session.results[0].candidates.count == initialMatches + 1 }
+            #expect(session.results[0].status == .complete)
+            try Data("Added.xcassets/\n".utf8).write(to: root.appendingPathComponent(".gitignore"))
+            try await eventually { session.state == .complete && session.discovered == initialCount }
+            try FileManager.default.removeItem(at: root.appendingPathComponent(".gitignore"))
+            try await eventually { session.state == .complete && session.discovered == initialCount + 1 }
+            try FileManager.default.removeItem(at: catalog)
+            try await eventually { session.state == .complete && session.discovered == initialCount }
+            #expect(session.results[0].candidates.count == initialMatches)
+            await session.close().value
+        }
+
+        private func eventually(_ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            while condition() == false, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(condition())
+        }
+
         @Test func addingInputsKeepsExistingComparisonUntilRefreshCompletes() async throws {
             let root = try StressDataset.demo.makeProject()
             defer { try? FileManager.default.removeItem(at: root) }
