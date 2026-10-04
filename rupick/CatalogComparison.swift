@@ -139,9 +139,23 @@ private struct PixelFingerprint: Hashable, Sendable {
     let width: Int
     let height: Int
     let digest: SHA256.Digest
-    init(_ pixels: DecodedPixels) {
+    let version: String
+
+    /// Source-byte versions track review freshness without changing exact pixel matching.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.width == rhs.width && lhs.height == rhs.height && lhs.digest == rhs.digest
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(digest)
+    }
+
+    init(_ pixels: DecodedPixels, source: Data) {
         width = pixels.width; height = pixels.height
         digest = pixels.values.withUnsafeBytes { SHA256.hash(data: $0) }
+        version = SHA256.hash(data: source).description
     }
 }
 
@@ -268,7 +282,7 @@ final class CatalogComparisonCache: Sendable {
 
     private func fingerprint(data: Data, identity: Identity, context: CIContext) throws -> PixelFingerprint {
         let url = identity.url
-        let fingerprint = try PixelFingerprint(pixels(data: data, context: context))
+        let fingerprint = try PixelFingerprint(pixels(data: data, context: context), source: data)
         guard try identity == Identity(url: url) else {
             throw CocoaError(.fileReadUnknown)
         }
@@ -449,7 +463,12 @@ enum CatalogComparison {
                 try incomingFingerprints.append(autoreleasepool {
                     try cache.fingerprint(url: incoming[index], context: context)
                 })
+                snapshot.results[index].contentVersion = incomingFingerprints.last.flatMap { $0 }?.version
             } catch {
+                // Review freshness still follows source bytes when decoding is unavailable.
+                snapshot.results[index].contentVersion = (try? Data(contentsOf: incoming[index])).map {
+                    SHA256.hash(data: $0).description
+                }
                 snapshot.results[index].status = .unreadable
                 incomingFingerprints.append(nil)
                 snapshot.results[index].error = "Could not read this PNG or JPEG. Check file access or choose another image, up to 16 megapixels and 8,192 pixels per side."
@@ -527,9 +546,10 @@ enum CatalogComparison {
                 let location = String(entry.path.dropFirst(boundary.path.hasSuffix("/") ? boundary.path.count : boundary.path.count + 1))
                 func candidate(matchingIDs: Set<String>) -> AssetCandidate {
                     AssetCandidate(id: entry.path, name: entry.deletingPathExtension().lastPathComponent,
-                                   location: location, representations: variants.map {
-                                       Representation(id: $0.id, url: $0.url, label: $0.label,
-                                                      matches: matchingIDs.contains($0.id))
+                                   location: location, representations: variants.map { variant in
+                                       Representation(id: variant.id, url: variant.url, label: variant.label,
+                                                      matches: matchingIDs.contains(variant.id),
+                                                      contentVersion: preparedEntry.representations.first(where: { $0.id == variant.id })?.fingerprint?.version)
                                    })
                 }
                 // An asset appears once in each content group, with all its alternatives available.

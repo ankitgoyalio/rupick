@@ -8,6 +8,7 @@ struct Representation: Identifiable, Sendable, Equatable {
     let url: URL
     let label: String
     let matches: Bool
+    var contentVersion: String?
 }
 
 // MARK: - AssetCandidate
@@ -57,6 +58,7 @@ struct IncomingResult: Identifiable, Sendable, Equatable {
     let url: URL
     var candidates = [AssetCandidate]()
     var error: String?
+    var contentVersion: String?
     var status = ComparisonStatus.waiting
 
     var statusText: String {
@@ -132,11 +134,101 @@ enum ReviewOutcome: Sendable, Equatable {
     }
 }
 
+// MARK: - ReviewNotice
+
+enum ReviewNotice: Sendable, Equatable {
+    case incomingChanged
+    case selectedMatchChanged
+    case newMatchFound
+
+    var title: LocalizedStringResource {
+        switch self {
+        case .incomingChanged,
+             .selectedMatchChanged:
+            "Review again"
+
+        case .newMatchFound:
+            "New match found"
+        }
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .incomingChanged:
+            "Image changed. Review this image again."
+
+        case .selectedMatchChanged:
+            "The reused image changed or is no longer a match. Choose a match or keep this image as new."
+
+        case .newMatchFound:
+            "New match found. Your decision is unchanged. Compare the new match to revisit it."
+        }
+    }
+}
+
 // MARK: - IncomingReview
 
 struct IncomingReview: Sendable, Equatable {
     var outcome: ReviewOutcome?
+    var notice: ReviewNotice?
+    private var contentVersion: String?
+    private var matchIDs = Set<String>()
     var representationIDs = [String: String]()
+
+    mutating func record(_ outcome: ReviewOutcome, for result: IncomingResult) {
+        self.outcome = outcome
+        notice = nil
+        contentVersion = result.contentVersion
+        matchIDs = Self.matches(in: result)
+    }
+
+    mutating func invalidateIncoming() {
+        guard outcome != nil else {
+            return
+        }
+
+        outcome = nil
+        notice = .incomingChanged
+    }
+
+    mutating func reconcile(with result: IncomingResult) {
+        representationIDs = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { candidate in
+            guard let selected = representationIDs[candidate.id] else {
+                return nil
+            }
+
+            let representation = candidate.representations.first { $0.id == selected } ?? candidate.representations.first(where: \.matches)
+            return representation.map { (candidate.id, $0.id) }
+        })
+        guard outcome != nil else {
+            return
+        }
+
+        guard contentVersion == result.contentVersion else {
+            invalidateIncoming()
+            return
+        }
+
+        if case let .reuse(asset) = outcome {
+            guard let candidate = result.candidates.first(where: { $0.id == asset.candidateID }),
+                  let representation = candidate.representations.first(where: { $0.id == asset.representation.id && $0.matches }),
+                  representation.contentVersion == asset.representation.contentVersion,
+                  representation.url == asset.representation.url,
+                  representation.label == asset.representation.label
+            else {
+                outcome = nil
+                notice = .selectedMatchChanged
+                return
+            }
+
+            outcome = .reuse(candidate: candidate, representation: representation)
+        }
+        notice = Self.matches(in: result).subtracting(matchIDs).isEmpty ? nil : .newMatchFound
+    }
+
+    private static func matches(in result: IncomingResult) -> Set<String> {
+        Set(result.candidates.flatMap { $0.representations.filter(\.matches).map(\.id) })
+    }
 }
 
 // MARK: - ScanSnapshot
@@ -169,12 +261,13 @@ final class ProjectSession {
         let scan: @Sendable (URL, [URL], ProjectCatalogInventory?, @escaping @Sendable (ScanSnapshot) async -> Void) async -> Void
 
         var observation = ProjectObservationAdapter.disabled
+        var incomingObservation = IncomingObservationAdapter.disabled
 
         static var native: Dependencies {
             let cache = CatalogComparisonCache()
             return Dependencies(access: .native, scan: { root, incoming, inventory, publish in
                 await CatalogComparison.run(root: root, incoming: incoming, cache: cache, inventory: inventory, publish: publish)
-            }, observation: .native)
+            }, observation: .native, incomingObservation: .native)
         }
     }
 
@@ -213,6 +306,8 @@ final class ProjectSession {
     private(set) var error: String?
     @ObservationIgnored private let dependencies: Dependencies
     @ObservationIgnored private var observation: ProjectObservation?
+    @ObservationIgnored private var incomingObservation: IncomingObservation?
+    @ObservationIgnored private var incomingObservationID = UUID()
     @ObservationIgnored private var refreshDelay: Task<Void, Never>?
     @ObservationIgnored private var worker: Task<Void, Never>?
     @ObservationIgnored private var workers = [UUID: Task<Void, Never>]()
@@ -234,6 +329,7 @@ final class ProjectSession {
     deinit {
         workers.values.forEach { $0.cancel() }
         refreshDelay?.cancel()
+        incomingObservation?.cancel()
     }
 
     var reviewedCount: Int {
@@ -264,17 +360,17 @@ final class ProjectSession {
             return false
         }
 
-        reviews[incoming, default: IncomingReview()].outcome = .reuse(candidate: candidate, representation: representation)
+        reviews[incoming, default: IncomingReview()].record(.reuse(candidate: candidate, representation: representation), for: result)
         selectRepresentation(for: incoming, candidateID: candidateID, representationID: representationID)
         return true
     }
 
     func keepAsNew(_ incoming: URL) {
-        guard isRunning == false, results.contains(where: { $0.url == incoming }) else {
+        guard isRunning == false, let result = results.first(where: { $0.url == incoming }) else {
             return
         }
 
-        reviews[incoming, default: IncomingReview()].outcome = .keepAsNew
+        reviews[incoming, default: IncomingReview()].record(.keepAsNew, for: result)
     }
 
     @discardableResult
@@ -293,7 +389,7 @@ final class ProjectSession {
                     return
                 }
 
-                catalogChanged()
+                filesChanged("Catalog changes detected. Updating results…")
             }
         } catch {
             observationError = "Automatic updates are unavailable. Reopen the project folder to try again."
@@ -301,7 +397,7 @@ final class ProjectSession {
         return refresh(incoming: incoming)
     }
 
-    private func catalogChanged() {
+    private func filesChanged(_ updatePhase: String) {
         // Reject current completions immediately, including during the quiet period.
         worker?.cancel()
         generation = UUID()
@@ -310,7 +406,7 @@ final class ProjectSession {
         for index in results.indices where results[index].error == nil {
             results[index].status = .comparing
         }
-        phase = "Catalog changes detected. Updating results…"
+        phase = updatePhase
         refreshDelay?.cancel()
         refreshDelay = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
@@ -351,6 +447,28 @@ final class ProjectSession {
             incomingAccess[url] = FileAccessLease(urls: [url], adapter: dependencies.access)
         }
         incomingAccess = incomingAccess.filter { seen.contains($0.key) }
+        incomingObservation?.cancel()
+        if let incomingObservation {
+            retiredPreviews.append(incomingObservation.task)
+        }
+        let observationID = UUID()
+        incomingObservationID = observationID
+        incomingObservation = dependencies.incomingObservation.start(incoming) { [weak self] changes in
+            guard let self, incomingObservationID == observationID else {
+                return
+            }
+
+            // A scan may already include an event delivered after its baseline was read.
+            guard changes.contains(where: { change in
+                results.first(where: { $0.url == change.url })?.contentVersion != change.contentVersion
+            }) else {
+                return
+            }
+
+            // Only the replacement scan can establish the current content version.
+            // Reject obsolete work now, and reconcile decisions with that scan's results.
+            filesChanged("Incoming images changed. Updating results…")
+        }
         let token = UUID()
         generation = token
         latestSnapshot = nil
@@ -369,11 +487,13 @@ final class ProjectSession {
         let access = FileAccessLease(urls: [root] + incoming, adapter: dependencies.access)
         let scan = dependencies.scan
         let observation = observation
+        let incomingObservation = incomingObservation
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             defer { access.release() }
             let publisher = ScanPublisher { [weak self] snapshot in
                 await self?.receive(snapshot, token: token)
             }
+            await incomingObservation?.ready()
             let inventory = await observation?.takeInitialInventory()
             guard Task.isCancelled == false else {
                 await self?.retire(token: token)
@@ -497,7 +617,10 @@ final class ProjectSession {
         projectAccess = nil
         incomingAccess.values.forEach { $0.release() }
         incomingAccess = [:]
-        let previews = retiredPreviews + [thumbnails.close()]
+        incomingObservationID = UUID()
+        incomingObservation?.cancel()
+        let previews = retiredPreviews + [thumbnails.close()] + [incomingObservation?.task].compactMap { $0 }
+        incomingObservation = nil
         retiredPreviews = []
         thumbnails = ThumbnailStore(access: dependencies.access)
         let temporary = temporaryRoot
@@ -601,23 +724,7 @@ final class ProjectSession {
                 continue
             }
 
-            review.representationIDs = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { candidate in
-                guard let selected = review.representationIDs[candidate.id] else {
-                    return nil
-                }
-
-                let representation = candidate.representations.first { $0.id == selected } ?? candidate.representations.first(where: \.matches)
-                return representation.map { (candidate.id, $0.id) }
-            })
-            if case let .reuse(asset) = review.outcome {
-                if let candidate = result.candidates.first(where: { $0.id == asset.candidateID }),
-                   let representation = candidate.representations.first(where: { $0.id == asset.representation.id && $0.matches })
-                {
-                    review.outcome = .reuse(candidate: candidate, representation: representation)
-                } else {
-                    review.outcome = nil
-                }
-            }
+            review.reconcile(with: result)
             reviews[result.url] = review
         }
         latestSnapshot = nil

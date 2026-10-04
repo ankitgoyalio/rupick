@@ -46,6 +46,171 @@ struct ProjectLifecycleTests {
         #expect(session.duplicateGroups.isEmpty)
     }
 
+    @Test(arguments: [false, true]) func incomingContentChangesRequireReviewAgain(reuse: Bool) async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let candidate = group("selected").members[0]
+        var result = IncomingResult(url: first, candidates: [candidate])
+        result.contentVersion = "original"
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await opening.value
+        if reuse {
+            #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: candidate.representations[0].id))
+        } else {
+            session.keepAsNew(first)
+        }
+        let refresh = session.refresh(incoming: [first])
+        await scan.waitForRequests(2)
+        result.contentVersion = "changed"
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result]))
+        await refresh.value
+        #expect(session.review(for: first).outcome == nil)
+        #expect(session.review(for: first).notice == .incomingChanged)
+        await session.close().value
+    }
+
+    @Test(arguments: [false, true]) func unrelatedEditsPreserveDecisionsAndNewMatchesInviteRevisit(reuse: Bool) async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let candidate = group("selected").members[0]
+        var result = IncomingResult(url: first, candidates: [candidate])
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await opening.value
+        if reuse {
+            #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: candidate.representations[0].id))
+        } else {
+            session.keepAsNew(first)
+        }
+        let outcome = session.review(for: first).outcome
+        let unrelated = session.refresh(incoming: [first])
+        await scan.waitForRequests(2)
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result], duplicateGroups: [group("unrelated")]))
+        await unrelated.value
+        #expect(session.review(for: first).outcome == outcome)
+        #expect(session.review(for: first).notice == nil)
+        let addition = session.refresh(incoming: [first])
+        await scan.waitForRequests(3)
+        result.candidates.append(group("new").members[0])
+        await scan.complete(2, snapshot: ScanSnapshot(results: [result]))
+        await addition.value
+        #expect(session.review(for: first).outcome == outcome)
+        #expect(session.review(for: first).notice == .newMatchFound)
+        session.keepAsNew(first)
+        #expect(session.review(for: first).notice == nil)
+        await session.close().value
+    }
+
+    @Test(arguments: [false, true]) func selectedMatchChangeOrRemovalRequiresReview(removed: Bool) async {
+        let scan = ControlledScan()
+        let session = makeSession(scan: scan)
+        let candidate = group("selected").members[0]
+        var result = IncomingResult(url: first, candidates: [candidate])
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await opening.value
+        #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: candidate.representations[0].id))
+        let refresh = session.refresh(incoming: [first])
+        await scan.waitForRequests(2)
+        if removed {
+            result.candidates = []
+        } else {
+            var representations = candidate.representations
+            representations[0].contentVersion = "changed"
+            result.candidates = [AssetCandidate(id: candidate.id, name: candidate.name, location: candidate.location, representations: representations)]
+        }
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result]))
+        await refresh.value
+        #expect(session.review(for: first).outcome == nil)
+        #expect(session.review(for: first).notice == .selectedMatchChanged)
+        await session.close().value
+    }
+
+    @Test(arguments: [false, true]) func incomingObservationReconcilesDecisionsAndRejectsObsoleteWork(reuse: Bool) async {
+        let scan = ControlledScan()
+        var changed: (@MainActor @Sendable ([IncomingFileChange]) -> Void)?
+        let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, _, publish in
+            await scan.run(root: root, incoming: incoming, publish: publish)
+        }, incomingObservation: IncomingObservationAdapter { _, callback in
+            changed = callback
+            return nil
+        }))
+        let candidate = group("selected").members[0]
+        let result = IncomingResult(url: first, candidates: [candidate], contentVersion: "original")
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await opening.value
+        if reuse {
+            #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: candidate.representations[0].id))
+        } else {
+            session.keepAsNew(first)
+        }
+        let obsolete = session.refresh(incoming: [first])
+        await scan.waitForRequests(2)
+        changed?([IncomingFileChange(url: first, contentVersion: "changed")])
+        #expect(session.state == .running)
+        await scan.publish(1, snapshot: ScanSnapshot(results: [result]))
+        #expect(session.state == .running)
+        await scan.waitForRequests(3)
+        await scan.complete(2, snapshot: ScanSnapshot(results: [IncomingResult(url: first, contentVersion: "changed")]))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while session.isRunning, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(session.state == .complete)
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result]))
+        await obsolete.value
+        #expect(session.results.first?.candidates.isEmpty == true)
+        #expect(session.review(for: first).outcome == nil)
+        let retiredCallback = changed
+        await session.close().value
+        retiredCallback?([IncomingFileChange(url: first, contentVersion: "retired")])
+        #expect(session.state == .idle)
+    }
+
+    @Test(arguments: [false, true]) func delayedIncomingEventPreservesDecisionForAlreadyComparedContent(reuse: Bool) async {
+        let scan = ControlledScan()
+        var changed: (@MainActor @Sendable ([IncomingFileChange]) -> Void)?
+        let session = ProjectSession(dependencies: .init(access: .native, scan: { root, incoming, _, publish in
+            await scan.run(root: root, incoming: incoming, publish: publish)
+        }, incomingObservation: IncomingObservationAdapter { _, callback in
+            changed = callback
+            return nil
+        }))
+        let candidate = group("selected").members[0]
+        let result = IncomingResult(url: first, candidates: [candidate], contentVersion: "current")
+        let opening = session.open(root: root, incoming: [first])
+        await scan.waitForRequests(1)
+        await scan.complete(0, snapshot: ScanSnapshot(results: [result]))
+        await opening.value
+        if reuse {
+            #expect(session.reuseAsset(for: first, candidateID: candidate.id, representationID: candidate.representations[0].id))
+        } else {
+            session.keepAsNew(first)
+        }
+        let outcome = session.review(for: first).outcome
+        changed?([IncomingFileChange(url: first, contentVersion: "current")])
+        #expect(session.state == .complete)
+        #expect(session.review(for: first).outcome == outcome)
+        #expect(session.review(for: first).notice == nil)
+        changed?([IncomingFileChange(url: first, contentVersion: "older-observation")])
+        await scan.waitForRequests(2)
+        await scan.complete(1, snapshot: ScanSnapshot(results: [result]))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while session.isRunning, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(session.state == .complete)
+        #expect(session.review(for: first).outcome == outcome)
+        #expect(session.review(for: first).notice == nil)
+        await session.close().value
+    }
+
     @Test func reopeningSameFolderStartsFreshAndRejectsOldIntake() async throws {
         let scan = ControlledScan()
         let access = AccessRecorder()

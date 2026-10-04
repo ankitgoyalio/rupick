@@ -62,6 +62,9 @@ struct ContentView: View {
                                                 .font(.caption)
                                                 .lineLimit(1)
                                                 .truncationMode(.middle)
+                                            if let notice = session.review(for: result.url).notice {
+                                                Text(notice.title).font(.caption).foregroundStyle(.secondary)
+                                            }
                                         }
                                         .tag(SidebarSelection.incoming(result.url))
                                         .accessibilityIdentifier("incoming-" + result.url.lastPathComponent)
@@ -566,7 +569,7 @@ private struct ComparisonDetail: View {
                 } else {
                     Text(result.statusLabel).accessibilityIdentifier("comparisonStatus")
                 }
-                ReviewSummary(outcome: session.review(for: result.url).outcome, isRunning: session.isRunning) {
+                ReviewSummary(review: session.review(for: result.url), isRunning: session.isRunning) {
                     session.keepAsNew(result.url)
                 }
                 HStack(alignment: .top, spacing: 16) {
@@ -588,7 +591,11 @@ private struct ComparisonDetail: View {
 // MARK: - ReviewSummary
 
 private struct ReviewSummary: View {
-    let outcome: ReviewOutcome?
+    let review: IncomingReview
+    private var outcome: ReviewOutcome? {
+        review.outcome
+    }
+
     let isRunning: Bool
     let keepAsNew: () -> Void
 
@@ -604,6 +611,11 @@ private struct ReviewSummary: View {
                     outcomeLabel
                     keepButton
                 }
+            }
+            if let notice = review.notice {
+                Text(notice.label)
+                    .font(.callout)
+                    .accessibilityIdentifier("reviewNotice")
             }
             if case let .reuse(asset) = outcome {
                 Text(asset.location).font(.caption).textSelection(.enabled)
