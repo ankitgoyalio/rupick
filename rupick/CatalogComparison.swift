@@ -69,7 +69,7 @@ private struct NormalizedImage {
 /// Bound concurrent normalized buffers across retiring and replacement scans.
 /// Framework working buffers and source bytes are additional to this allowance.
 private actor ImageDecodeBudget {
-    static let capacity = 128 * 1024 * 1024
+    static let capacity = 512 * 1024 * 1024
     private struct Waiter {
         let bytes: Int
         let continuation: CheckedContinuation<Void, Never>
@@ -79,7 +79,7 @@ private actor ImageDecodeBudget {
     private var waiters = [Waiter]()
 
     func acquire(bytes: Int) async {
-        // One supported image above the allowance can run alone.
+        // A request that fills the allowance runs alone.
         let bytes = min(bytes, Self.capacity)
         if waiters.isEmpty, used + bytes <= Self.capacity {
             used += bytes
